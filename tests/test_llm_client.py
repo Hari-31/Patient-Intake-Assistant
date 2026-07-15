@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 from types import SimpleNamespace
@@ -8,18 +9,36 @@ from app.services.conversation_store import Message
 from app.services.llm_client import LLMClient
 
 
-class FakeAsyncModels:
+class FakeResponses:
     def __init__(self) -> None:
-        self.request = None
+        self.create_request = None
+        self.parse_request = None
 
-    async def generate_content(self, **kwargs):
-        self.request = kwargs
-        return SimpleNamespace(text='{"chief_complaint": "Headache"}')
+    async def create(self, **kwargs):
+        self.create_request = kwargs
+        return SimpleNamespace(output_text="When did the headache begin?")
+
+    async def parse(self, **kwargs):
+        self.parse_request = kwargs
+        return SimpleNamespace(
+            output_parsed=MedicalSummary(
+                chief_complaint="Headache",
+                symptom_timeline="Started today",
+                relevant_history="None reported",
+                red_flags=[],
+                possible_directions=[],
+                suggested_questions_for_doctor=[],
+            )
+        )
 
 
-class FakeAsyncClient:
-    def __init__(self) -> None:
-        self.models = FakeAsyncModels()
+class FakeOpenAIClient:
+    last_instance = None
+
+    def __init__(self, **kwargs):
+        self.client_options = kwargs
+        self.responses = FakeResponses()
+        FakeOpenAIClient.last_instance = self
 
     async def __aenter__(self):
         return self
@@ -28,30 +47,14 @@ class FakeAsyncClient:
         return None
 
 
-class FakeGeminiClient:
-    last_instance = None
-
-    def __init__(self, *, api_key):
-        self.api_key = api_key
-        self.aio = FakeAsyncClient()
-        self.closed = False
-        FakeGeminiClient.last_instance = self
-
-    def close(self):
-        self.closed = True
-
-
 class LLMClientTests(unittest.IsolatedAsyncioTestCase):
-    async def test_converts_history_and_requests_structured_output(self) -> None:
+    async def test_sends_history_through_responses_api(self) -> None:
         with (
             patch.dict(
                 os.environ,
-                {"GEMINI_API_KEY": "test-key", "GEMINI_MODEL": "test-model"},
+                {"OPENAI_API_KEY": "test-key", "OPENAI_MODEL": "test-model"},
             ),
-            patch(
-                "app.services.llm_client.genai.Client",
-                FakeGeminiClient,
-            ),
+            patch("app.services.llm_client.AsyncOpenAI", FakeOpenAIClient),
         ):
             client = LLMClient()
             response = await client.complete(
@@ -59,25 +62,43 @@ class LLMClientTests(unittest.IsolatedAsyncioTestCase):
                     Message(role="system", content="System instructions"),
                     Message(role="user", content="Patient message"),
                     Message(role="assistant", content="Follow-up question"),
+                ]
+            )
+
+        fake_client = FakeOpenAIClient.last_instance
+        request = fake_client.responses.create_request
+        self.assertEqual(response, "When did the headache begin?")
+        self.assertEqual(request["model"], "test-model")
+        self.assertEqual(request["instructions"], "System instructions")
+        self.assertFalse(request["store"])
+        self.assertEqual(
+            [message["role"] for message in request["input"]],
+            ["user", "assistant"],
+        )
+
+    async def test_requests_native_structured_output(self) -> None:
+        with (
+            patch.dict(
+                os.environ,
+                {"OPENAI_API_KEY": "test-key", "OPENAI_MODEL": "test-model"},
+            ),
+            patch("app.services.llm_client.AsyncOpenAI", FakeOpenAIClient),
+        ):
+            client = LLMClient()
+            response = await client.complete(
+                [
+                    Message(role="system", content="Summary instructions"),
+                    Message(role="user", content="Conversation transcript"),
                 ],
                 response_model=MedicalSummary,
             )
 
-        fake_client = FakeGeminiClient.last_instance
-        request = fake_client.aio.models.request
-        self.assertEqual(response, '{"chief_complaint": "Headache"}')
+        fake_client = FakeOpenAIClient.last_instance
+        request = fake_client.responses.parse_request
+        self.assertEqual(json.loads(response)["chief_complaint"], "Headache")
         self.assertEqual(request["model"], "test-model")
-        self.assertEqual(
-            [content.role for content in request["contents"]], ["user", "model"]
-        )
-        self.assertEqual(
-            request["config"].system_instruction, "System instructions"
-        )
-        self.assertEqual(request["config"].response_schema, MedicalSummary)
-        self.assertEqual(
-            request["config"].response_mime_type, "application/json"
-        )
-        self.assertTrue(fake_client.closed)
+        self.assertIs(request["text_format"], MedicalSummary)
+        self.assertFalse(request["store"])
 
 
 if __name__ == "__main__":

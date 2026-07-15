@@ -1,10 +1,8 @@
 import os
 from collections.abc import Sequence
-from typing import Any
 
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+from openai import AsyncOpenAI
 from pydantic import BaseModel
 
 from app.services.conversation_store import Message
@@ -19,13 +17,12 @@ class LLMProviderError(RuntimeError):
 
 
 class LLMClient:
-    """Small Gemini provider boundary used by the rest of the application."""
+    """Small OpenAI provider boundary used by the rest of the application."""
 
     def __init__(self) -> None:
         load_dotenv()
-        # LLM_API_KEY remains as a migration fallback for existing local setups.
-        self.api_key = os.getenv("GEMINI_API_KEY") or os.getenv("LLM_API_KEY")
-        self.model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+        self.api_key = os.getenv("OPENAI_API_KEY")
+        self.model = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
 
     async def complete(
         self,
@@ -35,46 +32,53 @@ class LLMClient:
     ) -> str:
         if not self.api_key:
             raise LLMConfigurationError(
-                "GEMINI_API_KEY must be set in the environment."
+                "OPENAI_API_KEY must be set in the environment."
             )
 
-        system_instruction = "\n\n".join(
+        instructions = "\n\n".join(
             message.content for message in messages if message.role == "system"
         )
-        contents = [
-            types.Content(
-                role="model" if message.role == "assistant" else "user",
-                parts=[types.Part.from_text(text=message.content)],
-            )
+        input_messages = [
+            {"role": message.role, "content": message.content}
             for message in messages
             if message.role != "system"
         ]
 
-        config_values: dict[str, Any] = {
-            "system_instruction": system_instruction or None,
-            "temperature": 0.2,
-        }
-        if response_model is not None:
-            config_values.update(
-                response_mime_type="application/json",
-                response_schema=response_model,
-            )
-
-        client = genai.Client(api_key=self.api_key)
         try:
-            async with client.aio as async_client:
-                response = await async_client.models.generate_content(
+            async with AsyncOpenAI(
+                api_key=self.api_key,
+                timeout=60.0,
+                max_retries=2,
+            ) as client:
+                if response_model is not None:
+                    response = await client.responses.parse(
+                        model=self.model,
+                        instructions=instructions,
+                        input=input_messages,
+                        store=False,
+                        text_format=response_model,
+                    )
+                    if response.output_parsed is None:
+                        raise LLMProviderError(
+                            "OpenAI returned an empty, refused, or invalid "
+                            "structured response."
+                        )
+                    return response.output_parsed.model_dump_json()
+
+                response = await client.responses.create(
                     model=self.model,
-                    contents=contents,
-                    config=types.GenerateContentConfig(**config_values),
+                    instructions=instructions,
+                    input=input_messages,
+                    store=False,
                 )
+                if not response.output_text:
+                    raise LLMProviderError(
+                        "OpenAI returned an empty or refused response."
+                    )
+                return response.output_text.strip()
+        except LLMProviderError:
+            raise
         except Exception as exc:
             raise LLMProviderError(
-                "The Gemini service is temporarily unavailable."
+                "The OpenAI service is temporarily unavailable."
             ) from exc
-        finally:
-            client.close()
-
-        if not response.text:
-            raise LLMProviderError("Gemini returned an empty or blocked response.")
-        return response.text.strip()

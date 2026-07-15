@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 
 
@@ -24,10 +25,26 @@ RED_FLAG_RULES = (
 )
 
 
+NEGATION_BEFORE_PHRASE = re.compile(
+    r"(?:\bno\b|\bnot\b|\bwithout\b|\bnever\b|\bden(?:y|ies|ied)\b|"
+    r"\bdon't have\b|\bdo not have\b)[^.!?;]{0,50}$"
+)
+
+
+def _is_reported(normalized: str, phrase: str) -> bool:
+    start = normalized.find(phrase)
+    while start != -1:
+        preceding_text = normalized[max(0, start - 70) : start]
+        if NEGATION_BEFORE_PHRASE.search(preceding_text) is None:
+            return True
+        start = normalized.find(phrase, start + len(phrase))
+    return False
+
+
 def find_red_flags(text: str) -> list[str]:
     normalized = " ".join(text.lower().split())
     return [
         rule.label
         for rule in RED_FLAG_RULES
-        if any(phrase in normalized for phrase in rule.phrases)
+        if any(_is_reported(normalized, phrase) for phrase in rule.phrases)
     ]

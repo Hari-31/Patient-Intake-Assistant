@@ -8,7 +8,11 @@ from app.services.chat_service import (
     EmptyConversationError,
     InvalidSummaryError,
 )
-from app.services.conversation_store import conversation_store
+from app.services.conversation_store import (
+    ConversationStoreError,
+    SessionNotFoundError,
+    conversation_store,
+)
 from app.services.llm_client import (
     LLMClient,
     LLMConfigurationError,
@@ -40,7 +44,15 @@ async def chat(request: ChatRequest) -> ChatResponse:
     try:
         service = get_chat_service()
         return await service.chat(request.session_id, request.message)
-    except (LLMConfigurationError, LLMProviderError) as exc:
+    except SessionNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                "That session does not exist. Omit session_id to start a new "
+                "conversation, or use the UUID returned by the first /chat call."
+            ),
+        ) from exc
+    except (LLMConfigurationError, LLMProviderError, ConversationStoreError) as exc:
         raise service_unavailable(exc) from exc
 
 
@@ -59,5 +71,5 @@ async def summary(request: SummaryRequest) -> MedicalSummary:
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
         ) from exc
-    except (LLMConfigurationError, LLMProviderError) as exc:
+    except (LLMConfigurationError, LLMProviderError, ConversationStoreError) as exc:
         raise service_unavailable(exc) from exc
