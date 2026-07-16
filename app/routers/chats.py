@@ -1,7 +1,9 @@
 from functools import lru_cache
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.dependencies.auth import require_patient
+from app.models.auth import AuthenticatedUser
 from app.models.chats import ChatRequest, ChatResponse, MedicalSummary, SummaryRequest
 from app.services.chat_service import (
     ChatService,
@@ -40,10 +42,13 @@ def service_unavailable(exc: Exception) -> HTTPException:
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest) -> ChatResponse:
+async def chat(
+    request: ChatRequest,
+    patient: AuthenticatedUser = Depends(require_patient),
+) -> ChatResponse:
     try:
         service = get_chat_service()
-        return await service.chat(request.session_id, request.message)
+        return await service.chat(patient.id, request.session_id, request.message)
     except SessionNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -57,10 +62,18 @@ async def chat(request: ChatRequest) -> ChatResponse:
 
 
 @router.post("/summary", response_model=MedicalSummary)
-async def summary(request: SummaryRequest) -> MedicalSummary:
+async def summary(
+    request: SummaryRequest,
+    patient: AuthenticatedUser = Depends(require_patient),
+) -> MedicalSummary:
     try:
         service = get_chat_service()
-        return await service.summarize(request.session_id)
+        return await service.summarize(patient.id, request.session_id)
+    except SessionNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No conversation exists for that session id.",
+        ) from exc
     except EmptyConversationError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

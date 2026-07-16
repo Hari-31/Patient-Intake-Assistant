@@ -26,6 +26,7 @@ class FakeResponses:
                 symptom_timeline="Started today",
                 relevant_history="None reported",
                 red_flags=[],
+                warning_signs_to_watch=[],
                 possible_directions=[],
                 suggested_questions_for_doctor=[],
             )

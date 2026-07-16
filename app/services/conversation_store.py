@@ -28,16 +28,20 @@ class SessionNotFoundError(ConversationStoreError):
 
 
 class ConversationStore(Protocol):
-    async def create_session(self) -> UUID: ...
+    async def create_session(self, patient_id: UUID) -> UUID: ...
 
-    async def add(self, session_id: UUID, message: Message) -> None: ...
+    async def add(
+        self, patient_id: UUID, session_id: UUID, message: Message
+    ) -> None: ...
 
-    async def get(self, session_id: UUID) -> list[Message]: ...
+    async def get(self, patient_id: UUID, session_id: UUID) -> list[Message]: ...
 
-    async def get_summary(self, session_id: UUID) -> dict[str, Any] | None: ...
+    async def get_summary(
+        self, patient_id: UUID, session_id: UUID
+    ) -> dict[str, Any] | None: ...
 
     async def save_summary(
-        self, session_id: UUID, summary: dict[str, Any]
+        self, patient_id: UUID, session_id: UUID, summary: dict[str, Any]
     ) -> None: ...
 
 
@@ -59,52 +63,74 @@ class PostgresConversationStore:
             application_name="patient-intake-assistant",
         )
 
-    async def create_session(self) -> UUID:
-        return await asyncio.to_thread(self._create_session_sync)
+    async def create_session(self, patient_id: UUID) -> UUID:
+        return await asyncio.to_thread(self._create_session_sync, patient_id)
 
-    def _create_session_sync(self) -> UUID:
+    def _create_session_sync(self, patient_id: UUID) -> UUID:
         try:
             with self._connection() as connection:
                 row = connection.execute(
-                    "insert into public.sessions default values returning id"
+                    """
+                    insert into public.sessions (patient_id)
+                    values (%s)
+                    returning id
+                    """,
+                    (patient_id,),
                 ).fetchone()
                 return row[0]
         except psycopg.Error as exc:
-            raise ConversationStoreError("Could not create a conversation session.") from exc
+            raise ConversationStoreError(
+                "Could not create a conversation session."
+            ) from exc
 
-    async def add(self, session_id: UUID, message: Message) -> None:
-        await asyncio.to_thread(self._add_sync, session_id, message)
+    async def add(
+        self, patient_id: UUID, session_id: UUID, message: Message
+    ) -> None:
+        await asyncio.to_thread(self._add_sync, patient_id, session_id, message)
 
-    def _add_sync(self, session_id: UUID, message: Message) -> None:
+    def _add_sync(
+        self, patient_id: UUID, session_id: UUID, message: Message
+    ) -> None:
         database_role = "patient" if message.role == "user" else message.role
         try:
             with self._connection() as connection:
                 with connection.cursor() as cursor:
-                    session_exists = cursor.execute(
-                        "select 1 from public.sessions where id = %s",
-                        (session_id,),
+                    inserted_message = cursor.execute(
+                        """
+                        insert into public.messages (session_id, role, content)
+                        select id, %s, %s
+                        from public.sessions
+                        where id = %s and patient_id = %s
+                        returning id
+                        """,
+                        (
+                            database_role,
+                            message.content,
+                            session_id,
+                            patient_id,
+                        ),
                     ).fetchone()
-                    if session_exists is None:
+                    if inserted_message is None:
                         raise SessionNotFoundError(str(session_id))
 
                     cursor.execute(
                         """
-                        insert into public.messages (session_id, role, content)
-                        values (%s, %s, %s)
+                        delete from public.summaries as summary_record
+                        using public.sessions as session
+                        where summary_record.session_id = session.id
+                          and session.id = %s
+                          and session.patient_id = %s
                         """,
-                        (session_id, database_role, message.content),
-                    )
-                    cursor.execute(
-                        "delete from public.summaries where session_id = %s",
-                        (session_id,),
+                        (session_id, patient_id),
                     )
                     cursor.execute(
                         """
                         insert into public.audit_log (session_id, event_type, content)
-                        values (%s, %s, %s)
+                        select id, %s, %s
+                        from public.sessions
+                        where id = %s and patient_id = %s
                         """,
                         (
-                            session_id,
                             f"message.{database_role}",
                             Jsonb(
                                 {
@@ -112,6 +138,8 @@ class PostgresConversationStore:
                                     "content": message.content,
                                 }
                             ),
+                            session_id,
+                            patient_id,
                         ),
                     )
         except psycopg.Error as exc:
@@ -119,21 +147,24 @@ class PostgresConversationStore:
                 "Could not save the conversation message."
             ) from exc
 
-    async def get(self, session_id: UUID) -> list[Message]:
-        return await asyncio.to_thread(self._get_sync, session_id)
+    async def get(self, patient_id: UUID, session_id: UUID) -> list[Message]:
+        return await asyncio.to_thread(self._get_sync, patient_id, session_id)
 
-    def _get_sync(self, session_id: UUID) -> list[Message]:
+    def _get_sync(self, patient_id: UUID, session_id: UUID) -> list[Message]:
         try:
             with self._connection() as connection:
                 with connection.cursor() as cursor:
                     cursor.execute(
                         """
                         select role, content
-                        from public.messages
-                        where session_id = %s
-                        order by created_at, id
+                        from public.messages as message
+                        join public.sessions as session
+                          on session.id = message.session_id
+                        where message.session_id = %s
+                          and session.patient_id = %s
+                        order by message.created_at, message.id
                         """,
-                        (session_id,),
+                        (session_id, patient_id),
                     )
                     return [
                         Message(
@@ -147,20 +178,29 @@ class PostgresConversationStore:
                 "Could not load the conversation history."
             ) from exc
 
-    async def get_summary(self, session_id: UUID) -> dict[str, Any] | None:
-        return await asyncio.to_thread(self._get_summary_sync, session_id)
+    async def get_summary(
+        self, patient_id: UUID, session_id: UUID
+    ) -> dict[str, Any] | None:
+        return await asyncio.to_thread(
+            self._get_summary_sync, patient_id, session_id
+        )
 
-    def _get_summary_sync(self, session_id: UUID) -> dict[str, Any] | None:
+    def _get_summary_sync(
+        self, patient_id: UUID, session_id: UUID
+    ) -> dict[str, Any] | None:
         try:
             with self._connection() as connection:
                 with connection.cursor() as cursor:
                     cursor.execute(
                         """
                         select summary
-                        from public.summaries
-                        where session_id = %s
+                        from public.summaries as summary_record
+                        join public.sessions as session
+                          on session.id = summary_record.session_id
+                        where summary_record.session_id = %s
+                          and session.patient_id = %s
                         """,
-                        (session_id,),
+                        (session_id, patient_id),
                     )
                     row = cursor.fetchone()
                     return row[0] if row else None
@@ -170,32 +210,42 @@ class PostgresConversationStore:
             ) from exc
 
     async def save_summary(
-        self, session_id: UUID, summary: dict[str, Any]
+        self, patient_id: UUID, session_id: UUID, summary: dict[str, Any]
     ) -> None:
-        await asyncio.to_thread(self._save_summary_sync, session_id, summary)
+        await asyncio.to_thread(
+            self._save_summary_sync, patient_id, session_id, summary
+        )
 
     def _save_summary_sync(
-        self, session_id: UUID, summary: dict[str, Any]
+        self, patient_id: UUID, session_id: UUID, summary: dict[str, Any]
     ) -> None:
         try:
             with self._connection() as connection:
                 with connection.cursor() as cursor:
-                    cursor.execute(
+                    saved_summary = cursor.execute(
                         """
                         insert into public.summaries (session_id, summary)
-                        values (%s, %s)
+                        select id, %s
+                        from public.sessions
+                        where id = %s and patient_id = %s
                         on conflict (session_id) do update
                         set summary = excluded.summary,
                             updated_at = now()
+                        returning id
                         """,
-                        (session_id, Jsonb(summary)),
-                    )
+                        (Jsonb(summary), session_id, patient_id),
+                    ).fetchone()
+                    if saved_summary is None:
+                        raise SessionNotFoundError(str(session_id))
+
                     cursor.execute(
                         """
                         insert into public.audit_log (session_id, event_type, content)
-                        values (%s, 'summary.generated', %s)
+                        select id, 'summary.generated', %s
+                        from public.sessions
+                        where id = %s and patient_id = %s
                         """,
-                        (session_id, Jsonb(summary)),
+                        (Jsonb(summary), session_id, patient_id),
                     )
         except psycopg.Error as exc:
             raise ConversationStoreError(

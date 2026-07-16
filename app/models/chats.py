@@ -24,15 +24,21 @@ class MedicalSummary(BaseModel):
     relevant_history: str = Field(description="Any relevant past history, chronic conditions, or medications mentioned.")
     red_flags: list[str] = Field(
         description=(
-            "Urgent warning signs actually reported by this patient. Exclude denied, "
-            "absent, hypothetical, and future symptoms; use an empty list when none "
-            "were reported."
+            "Alarming findings actually reported by this patient in the conversation. "
+            "Exclude denied, absent, hypothetical, and future symptoms; use an empty "
+            "list when none were reported."
+        )
+    )
+    warning_signs_to_watch: list[str] = Field(
+        description=(
+            "Symptoms or changes that would warrant urgent care if they appear later. "
+            "Do not include these in red_flags unless the patient already reported them."
         )
     )
     possible_directions: list[str] = Field(
         description=(
-            "Potential non-diagnostic directions, care levels, and future warning "
-            "signs that should prompt urgent evaluation."
+            "Potential non-diagnostic considerations, next steps, or care levels. "
+            "Do not place future warning signs in this field."
         )
     )
     suggested_questions_for_doctor: list[str] = Field(description="Helpful questions the patient should ask their healthcare provider.")

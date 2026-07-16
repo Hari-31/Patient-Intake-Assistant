@@ -1,5 +1,7 @@
 fastapi
+httpx
 openai
 psycopg[binary]
+PyJWT[crypto]
 python-dotenv
 uvicorn[standard]

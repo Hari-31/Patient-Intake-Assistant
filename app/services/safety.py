@@ -18,8 +18,9 @@ class RedFlag:
 RED_FLAG_RULES = (
     RedFlag("possible heart or breathing emergency", ("chest pain", "chest pressure", "can't breathe", "cannot breathe", "trouble breathing", "severe shortness of breath")),
     RedFlag("possible stroke symptoms", ("face drooping", "facial droop", "slurred speech", "sudden weakness", "one-sided weakness", "one sided weakness")),
+    RedFlag("sudden worst-ever headache", ("worst headache of my life", "worst-ever headache", "worst ever headache", "thunderclap headache")),
     RedFlag("loss of consciousness or seizure", ("passed out", "unconscious", "not waking up", "having a seizure", "seizure now")),
-    RedFlag("severe bleeding", ("bleeding heavily", "won't stop bleeding", "will not stop bleeding", "vomiting blood", "coughing up blood")),
+    RedFlag("severe bleeding", ("bleeding heavily", "won't stop bleeding", "will not stop bleeding", "vomiting blood", "vomited blood", "coughing up blood", "black tarry stools", "black, tarry stools", "tarry stools")),
     RedFlag("severe allergic reaction", ("throat is closing", "throat closing", "swollen tongue", "anaphylaxis")),
     RedFlag("immediate self-harm risk", ("kill myself", "end my life", "suicidal", "hurt myself")),
 )

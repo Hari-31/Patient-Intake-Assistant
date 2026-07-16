@@ -18,7 +18,14 @@ Over the conversation, cover the chief concern, onset, duration, progression, se
 When enough useful information has been collected, do not keep interviewing. Say that the intake has enough information for a preliminary summary and invite the patient to request the summary. Never hide urgent risk: advise immediate emergency help when the conversation suggests a potentially life-threatening situation. The final clinician must verify everything against the full transcript."""
 
 
-SUMMARY_SYSTEM_PROMPT = """You create a structured medical intake summary for clinician review from the supplied transcript. This is decision support, not a diagnosis. Do not invent facts. Clearly represent missing or uncertain information. The red_flags field is only for urgent warning signs the patient affirmatively reported in this conversation. Never put denied symptoms, absent symptoms, hypothetical risks, or warning signs to watch for in red_flags; return an empty list when none were reported. Put future warning signs and escalation guidance in possible_directions instead. Possible directions must be cautious, non-diagnostic considerations or care levels, not definitive conclusions. Follow the supplied response schema."""
+SUMMARY_SYSTEM_PROMPT = """You create a structured medical intake summary for clinician review from the supplied transcript. This is decision support, not a diagnosis. Do not invent facts. Clearly represent missing or uncertain information.
+
+Keep these fields strictly separate:
+- red_flags: ONLY alarming findings the patient affirmatively reported in this conversation. Never include denied, absent, hypothetical, or future symptoms. Return [] when no red flags were reported.
+- warning_signs_to_watch: symptoms or changes that would warrant urgent care IF they appear later. These are anticipatory warnings, not current patient findings.
+- possible_directions: cautious, non-diagnostic considerations, next steps, or care levels. Do not put warning signs in this field.
+
+Never copy an item from warning_signs_to_watch into red_flags unless the transcript says the patient is currently experiencing it. Follow the supplied response schema."""
 
 
 class EmptyConversationError(LookupError):
@@ -39,17 +46,18 @@ class ChatService:
         self.llm = llm
 
     async def chat(
-        self, session_id: UUID | None, patient_message: str
+        self, patient_id: UUID, session_id: UUID | None, patient_message: str
     ) -> ChatResponse:
         if session_id is None:
-            session_id = await self.store.create_session()
+            session_id = await self.store.create_session(patient_id)
 
         message = Message(role="user", content=patient_message.strip())
-        await self.store.add(session_id, message)
+        await self.store.add(patient_id, session_id, message)
 
         red_flags = find_red_flags(patient_message)
         if red_flags:
             await self.store.add(
+                patient_id,
                 session_id,
                 Message(role="assistant", content=URGENT_CARE_MESSAGE),
             )
@@ -59,19 +67,23 @@ class ChatService:
                 emergency_triggered=True,
             )
 
-        history = await self.store.get(session_id)
+        history = await self.store.get(patient_id, session_id)
         reply = await self.llm.complete(
             [Message(role="system", content=INTAKE_SYSTEM_PROMPT), *history]
         )
-        await self.store.add(session_id, Message(role="assistant", content=reply))
+        await self.store.add(
+            patient_id, session_id, Message(role="assistant", content=reply)
+        )
         return ChatResponse(
             session_id=session_id,
             reply=reply,
             emergency_triggered=False,
         )
 
-    async def summarize(self, session_id: UUID) -> MedicalSummary:
-        history = await self.store.get(session_id)
+    async def summarize(
+        self, patient_id: UUID, session_id: UUID
+    ) -> MedicalSummary:
+        history = await self.store.get(patient_id, session_id)
         if not history:
             raise EmptyConversationError(session_id)
 
@@ -83,13 +95,19 @@ class ChatService:
                 for flag in find_red_flags(message.content)
             )
         )
-        persisted_summary = await self.store.get_summary(session_id)
-        if persisted_summary is not None:
+        persisted_summary = await self.store.get_summary(patient_id, session_id)
+        # Summaries saved before warning_signs_to_watch existed may mix future
+        # warnings into red_flags or possible_directions. Regenerate them once
+        # using the strict current schema instead of guessing how to split them.
+        if (
+            persisted_summary is not None
+            and "warning_signs_to_watch" in persisted_summary
+        ):
             summary = MedicalSummary.model_validate(persisted_summary)
             if summary.red_flags != detected_flags:
                 summary.red_flags = detected_flags
                 await self.store.save_summary(
-                    session_id, summary.model_dump(mode="json")
+                    patient_id, session_id, summary.model_dump(mode="json")
                 )
             return summary
 
@@ -110,5 +128,7 @@ class ChatService:
 
         # Safety rules, not generic LLM advice, define patient-specific red flags.
         summary.red_flags = detected_flags
-        await self.store.save_summary(session_id, summary.model_dump(mode="json"))
+        await self.store.save_summary(
+            patient_id, session_id, summary.model_dump(mode="json")
+        )
         return summary

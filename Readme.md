@@ -23,13 +23,46 @@ deployment environments should inject the same values as environment variables.
 For OpenAI-backed chat, set `OPENAI_API_KEY`. The default model is
 `gpt-5.6-terra`; override it with `OPENAI_MODEL` if needed.
 
+## Supabase Auth
+
+Enable the desired login provider in **Supabase Dashboard → Authentication →
+Providers**. Configure the backend with:
+
+```env
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_JWT_SECRET=
+SUPABASE_SERVICE_ROLE_KEY=
+```
+
+The JWT secret and service-role key are backend-only secrets and must never be
+included in frontend code. `POST /auth/signup` creates patient accounts through
+the Supabase admin API and writes `patient` to `app_metadata.role`; callers
+cannot choose a role. The patient's name is copied into `profiles` by a database
+trigger. After signup, log in through Supabase Auth and send its access token to
+the protected endpoints:
+
+```http
+Authorization: Bearer <supabase-access-token>
+```
+
+The API verifies the signature, issuer, audience, and expiration using either
+the configured HS256 secret or Supabase's JWKS endpoint for current asymmetric
+tokens. It then reads the application role only from `app_metadata.role` and
+never authorizes from user-editable `user_metadata`.
+
 ## API
 
 - `GET /health` checks API availability.
-- `POST /chat` accepts `{"message": "..."}` for the first turn and returns a
-  server-generated UUID. Send that UUID as `session_id` on subsequent turns.
+- `POST /auth/signup` accepts `{"email": "...", "password": "...", "name":
+  "..."}` and creates a patient account server-side.
+- `POST /chat` requires a patient bearer token, accepts `{"message": "..."}`
+  for the first turn, and returns an owned server-generated UUID. Send that UUID
+  as `session_id` on subsequent turns.
 - `POST /summary` accepts `{"session_id": "<uuid>"}` and returns the fixed
-  medical intake summary shape.
+  medical intake summary shape. `red_flags` contains only alarming findings the
+  patient actually reported; `warning_signs_to_watch` contains future symptoms
+  that should prompt urgent care if they develop. It requires the owning
+  patient's bearer token.
 
 ## Supabase Postgres persistence
 
@@ -51,3 +84,15 @@ The `sessions`, `messages`, `summaries`, and `audit_log` tables can then be
 inspected from Supabase's Table Editor. Messages and summaries persist across
 API restarts. A new message invalidates the previously generated summary so the
 next `/summary` call reflects the latest transcript.
+
+The Phase 3 migration creates `profiles`, reserves `doctor_id` for Phase 5,
+rejects new sessions without an owner, and adds patient-only RLS policies using
+`auth.jwt() -> 'app_metadata' ->> 'role'`. Legacy NULL-owner sessions remain
+inaccessible. Once they have been deliberately assigned or removed, make the
+column fully non-nullable:
+
+```sql
+alter table public.sessions validate constraint sessions_patient_id_required;
+alter table public.sessions alter column patient_id set not null;
+alter table public.sessions drop constraint sessions_patient_id_required;
+```
