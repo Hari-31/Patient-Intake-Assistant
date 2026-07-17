@@ -63,6 +63,9 @@ never authorizes from user-editable `user_metadata`.
   patient actually reported; `warning_signs_to_watch` contains future symptoms
   that should prompt urgent care if they develop. It requires the owning
   patient's bearer token.
+- `POST /upload` requires a patient bearer token and multipart form fields
+  `session_id` plus a PDF `file`. The session must belong to that patient. The
+  response includes the report UUID and number of embedded chunks.
 
 ## Supabase Postgres persistence
 
@@ -96,3 +99,16 @@ alter table public.sessions validate constraint sessions_patient_id_required;
 alter table public.sessions alter column patient_id set not null;
 alter table public.sessions drop constraint sessions_patient_id_required;
 ```
+
+## Patient report RAG
+
+Phase 4 creates a private `medical-reports` Storage bucket plus patient-owned
+`reports` and `report_chunks` tables. PDF text is split into overlapping chunks,
+embedded with `OPENAI_EMBEDDING_MODEL` (default `text-embedding-3-small`), and
+stored in pgvector. Chat and summary retrieval always filters by both patient
+and session before ranking chunks with cosine distance. Sessions without a
+report skip the embedding call and retain the original chat behavior.
+
+Upload from Swagger by authorizing with a patient token, opening `POST /upload`,
+entering an owned session UUID, and selecting a text-based PDF. Scanned PDFs are
+rejected until OCR support is added. The initial file limit is 10 MB.

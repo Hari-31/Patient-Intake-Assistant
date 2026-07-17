@@ -20,6 +20,12 @@ from app.services.llm_client import (
     LLMConfigurationError,
     LLMProviderError,
 )
+from app.services.rag_service import (
+    RAGConfigurationError,
+    RAGProviderError,
+    RAGStoreError,
+    get_rag_service,
+)
 
 
 router = APIRouter(tags=["chat"])
@@ -27,7 +33,11 @@ router = APIRouter(tags=["chat"])
 
 @lru_cache
 def get_chat_service() -> ChatService:
-    return ChatService(store=conversation_store, llm=LLMClient())
+    return ChatService(
+        store=conversation_store,
+        llm=LLMClient(),
+        rag=get_rag_service(),
+    )
 
 
 def service_unavailable(exc: Exception) -> HTTPException:
@@ -57,7 +67,14 @@ async def chat(
                 "conversation, or use the UUID returned by the first /chat call."
             ),
         ) from exc
-    except (LLMConfigurationError, LLMProviderError, ConversationStoreError) as exc:
+    except (
+        LLMConfigurationError,
+        LLMProviderError,
+        ConversationStoreError,
+        RAGConfigurationError,
+        RAGProviderError,
+        RAGStoreError,
+    ) as exc:
         raise service_unavailable(exc) from exc
 
 
@@ -84,5 +101,12 @@ async def summary(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
         ) from exc
-    except (LLMConfigurationError, LLMProviderError, ConversationStoreError) as exc:
+    except (
+        LLMConfigurationError,
+        LLMProviderError,
+        ConversationStoreError,
+        RAGConfigurationError,
+        RAGProviderError,
+        RAGStoreError,
+    ) as exc:
         raise service_unavailable(exc) from exc

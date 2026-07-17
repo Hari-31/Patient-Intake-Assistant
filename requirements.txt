@@ -2,6 +2,8 @@ fastapi
 httpx
 openai
 psycopg[binary]
+pypdf
 PyJWT[crypto]
+python-multipart
 python-dotenv
 uvicorn[standard]
