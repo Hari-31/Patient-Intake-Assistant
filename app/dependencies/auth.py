@@ -55,3 +55,14 @@ async def require_patient(
             detail="Patient access is required.",
         )
     return user
+
+
+async def require_doctor(
+    user: AuthenticatedUser = Depends(get_current_user),
+) -> AuthenticatedUser:
+    if user.role is not UserRole.DOCTOR:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Doctor access is required.",
+        )
+    return user

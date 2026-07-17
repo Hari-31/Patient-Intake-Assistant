@@ -7,7 +7,7 @@ from uuid import uuid4
 import jwt
 from fastapi import HTTPException
 
-from app.dependencies.auth import require_patient
+from app.dependencies.auth import require_doctor, require_patient
 from app.models.auth import AuthenticatedUser, UserRole
 from app.services.auth import AuthenticationError, SupabaseAuthService
 
@@ -104,6 +104,12 @@ class SupabaseAuthServiceTests(unittest.IsolatedAsyncioTestCase):
         doctor = AuthenticatedUser(id=uuid4(), role=UserRole.DOCTOR)
         with self.assertRaises(HTTPException) as context:
             await require_patient(doctor)
+        self.assertEqual(context.exception.status_code, 403)
+
+    async def test_patient_cannot_use_doctor_dependency(self) -> None:
+        patient = AuthenticatedUser(id=uuid4(), role=UserRole.PATIENT)
+        with self.assertRaises(HTTPException) as context:
+            await require_doctor(patient)
         self.assertEqual(context.exception.status_code, 403)
 
     async def test_patient_signup_sets_role_only_in_app_metadata(self) -> None:

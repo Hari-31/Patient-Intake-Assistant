@@ -2,6 +2,7 @@ from fastapi import FastAPI
 
 from app.routers.auth import router as auth_router
 from app.routers.chats import router as chats_router
+from app.routers.doctors import router as doctors_router
 from app.routers.health import router as health_router
 from app.routers.reports import router as reports_router
 
@@ -11,3 +12,4 @@ app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(chats_router)
 app.include_router(reports_router)
+app.include_router(doctors_router)

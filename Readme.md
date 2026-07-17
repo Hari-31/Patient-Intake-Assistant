@@ -66,6 +66,20 @@ never authorizes from user-editable `user_metadata`.
 - `POST /upload` requires a patient bearer token and multipart form fields
   `session_id` plus a PDF `file`. The session must belong to that patient. The
   response includes the report UUID and number of embedded chunks.
+- `GET /doctor/patients` requires a doctor bearer token and lists only patients
+  assigned to that doctor.
+- `GET /doctor/summaries` returns summaries for assigned patients. Pass an
+  optional `patient_id` query parameter to filter the result.
+- `GET /doctor/sessions/{session_id}` returns an assigned patient's ordered
+  transcript and its current summary for side-by-side verification.
+
+Doctor access is read-only. Create assignments manually with a trusted SQL or
+admin workflow; never expose this operation to a patient client:
+
+```sql
+insert into public.patient_doctor (patient_id, doctor_id)
+values ('<patient-auth-user-uuid>', '<doctor-auth-user-uuid>');
+```
 
 ## Supabase Postgres persistence
 
@@ -99,6 +113,12 @@ alter table public.sessions validate constraint sessions_patient_id_required;
 alter table public.sessions alter column patient_id set not null;
 alter table public.sessions drop constraint sessions_patient_id_required;
 ```
+
+The Phase 5 migration creates `patient_doctor` as the authoritative assignment
+table and adds doctor-only SELECT policies for assigned profiles, sessions,
+messages, and summaries. It grants no doctor write operations. The FastAPI
+reader also joins every query through `patient_doctor` because the backend
+database connection is privileged and bypasses RLS.
 
 ## Patient report RAG
 
