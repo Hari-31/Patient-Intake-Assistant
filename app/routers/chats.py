@@ -8,6 +8,8 @@ from app.models.chats import ChatRequest, ChatResponse, MedicalSummary, SummaryR
 from app.services.chat_service import (
     ChatService,
     EmptyConversationError,
+    InvalidIntakeDecisionError,
+    IntakeIncompleteError,
     InvalidSummaryError,
 )
 from app.services.conversation_store import (
@@ -67,6 +69,11 @@ async def chat(
                 "conversation, or use the UUID returned by the first /chat call."
             ),
         ) from exc
+    except InvalidIntakeDecisionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The intake assistant returned an invalid response.",
+        ) from exc
     except (
         LLMConfigurationError,
         LLMProviderError,
@@ -95,6 +102,16 @@ async def summary(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No conversation exists for that session id.",
+        ) from exc
+    except InvalidIntakeDecisionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The intake assistant returned an invalid response.",
+        ) from exc
+    except IntakeIncompleteError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
         ) from exc
     except InvalidSummaryError as exc:
         raise HTTPException(

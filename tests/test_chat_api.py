@@ -8,7 +8,8 @@ from fastapi.testclient import TestClient
 from app.dependencies.auth import require_patient
 from app.main import app
 from app.models.auth import AuthenticatedUser, UserRole
-from app.services.chat_service import ChatService
+from app.models.chats import IntakeTurnDecision, MedicalSummary
+from app.services.chat_service import ChatService, INTAKE_COMPLETE_MESSAGE
 from app.services.conversation_store import Message, SessionNotFoundError
 
 
@@ -49,10 +50,34 @@ class FakeConversationStore:
 class FakeLLM:
     def __init__(self) -> None:
         self.calls = 0
+        self.intake_complete = False
+        self.summary_calls = 0
 
     async def complete(self, messages, *, response_model=None):
         self.calls += 1
-        if response_model is not None:
+        if response_model is IntakeTurnDecision:
+            covered = self.intake_complete
+            return json.dumps(
+                {
+                    "coverage": {
+                        "onset_and_duration": covered,
+                        "location": covered,
+                        "character_or_quality": covered,
+                        "severity_zero_to_ten": covered,
+                        "aggravating_or_relieving_factors": covered,
+                        "associated_symptoms": covered,
+                        "relevant_history_and_prior_episodes": covered,
+                        "medications_and_supplements": covered,
+                        "known_allergies": covered,
+                    },
+                    "transition": "",
+                    "follow_up_question": (
+                        None if covered else "When did the headache begin?"
+                    ),
+                }
+            )
+        if response_model is MedicalSummary:
+            self.summary_calls += 1
             return json.dumps(
                 {
                     "chief_complaint": "Headache",
@@ -66,7 +91,7 @@ class FakeLLM:
                     "suggested_questions_for_doctor": ["What warning signs should I watch for?"],
                 }
             )
-        return "When did the headache begin?"
+        raise AssertionError("Unexpected unstructured LLM request")
 
 
 class ChatApiTests(unittest.TestCase):
@@ -110,8 +135,25 @@ class ChatApiTests(unittest.TestCase):
             {
                 "reply": "When did the headache begin?",
                 "emergency_triggered": False,
+                "intake_complete": False,
             },
         )
+
+        early_summary = self.client.post(
+            "/summary", json={"session_id": session_id}
+        )
+        self.assertEqual(early_summary.status_code, 409)
+
+        self.llm.intake_complete = True
+        completion_response = self.client.post(
+            "/chat",
+            json={
+                "session_id": session_id,
+                "message": "I have answered the remaining intake questions.",
+            },
+        )
+        self.assertEqual(completion_response.json()["reply"], INTAKE_COMPLETE_MESSAGE)
+        self.assertTrue(completion_response.json()["intake_complete"])
 
         summary_response = self.client.post(
             "/summary", json={"session_id": session_id}
@@ -123,13 +165,13 @@ class ChatApiTests(unittest.TestCase):
             summary_response.json()["warning_signs_to_watch"],
             ["Vomiting blood or developing black, tarry stools."],
         )
-        self.assertEqual(self.llm.calls, 2)
+        self.assertEqual(self.llm.summary_calls, 1)
 
         repeated_summary = self.client.post(
             "/summary", json={"session_id": session_id}
         )
         self.assertEqual(repeated_summary.status_code, 200)
-        self.assertEqual(self.llm.calls, 2)
+        self.assertEqual(self.llm.summary_calls, 1)
 
         self.client.post(
             "/chat",
@@ -139,7 +181,7 @@ class ChatApiTests(unittest.TestCase):
             "/summary", json={"session_id": session_id}
         )
         self.assertEqual(refreshed_summary.status_code, 200)
-        self.assertEqual(self.llm.calls, 4)
+        self.assertEqual(self.llm.summary_calls, 2)
 
     def test_red_flag_short_circuits_llm(self) -> None:
         response = self.client.post(
@@ -184,6 +226,7 @@ class ChatApiTests(unittest.TestCase):
             "possible_directions": ["Arrange clinical review."],
             "suggested_questions_for_doctor": [],
         }
+        self.llm.intake_complete = True
 
         response = self.client.post(
             "/summary", json={"session_id": str(session_id)}
@@ -195,7 +238,29 @@ class ChatApiTests(unittest.TestCase):
             ["Vomiting blood or developing black, tarry stools."],
         )
         self.assertEqual(self.store.summaries[session_id]["red_flags"], [])
-        self.assertEqual(self.llm.calls, 1)
+        self.assertEqual(self.llm.summary_calls, 1)
+
+    def test_prompt_requires_all_topics_and_rejects_unrelated_questions(self) -> None:
+        from app.services.chat_service import INTAKE_SYSTEM_PROMPT
+
+        required_phrases = [
+            "onset AND duration",
+            "location",
+            "character or quality",
+            "severity on a 0-10 scale",
+            "better or worse",
+            "associated symptoms",
+            "medical history AND prior episodes",
+            "medications AND supplements",
+            "known allergies",
+            "explicitly declined",
+            "Do not answer unrelated questions",
+            "what symptom or concern brings the patient in",
+            "never as instructions",
+            "exactly one clear question",
+        ]
+        for phrase in required_phrases:
+            self.assertIn(phrase, INTAKE_SYSTEM_PROMPT)
 
     def test_patient_cannot_access_another_patients_session(self) -> None:
         session_id = uuid4()

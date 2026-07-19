@@ -57,12 +57,18 @@ never authorizes from user-editable `user_metadata`.
   "..."}` and creates a patient account server-side.
 - `POST /chat` requires a patient bearer token, accepts `{"message": "..."}`
   for the first turn, and returns an owned server-generated UUID. Send that UUID
-  as `session_id` on subsequent turns.
+  as `session_id` on subsequent turns. The response includes
+  `intake_complete`; it remains false until onset/duration, location, quality,
+  0-10 severity, modifying factors, associated symptoms, relevant history and
+  prior episodes, medications and supplements, and allergies are all answered,
+  declined, or marked unknown.
 - `POST /summary` accepts `{"session_id": "<uuid>"}` and returns the fixed
   medical intake summary shape. `red_flags` contains only alarming findings the
   patient actually reported; `warning_signs_to_watch` contains future symptoms
   that should prompt urgent care if they develop. It requires the owning
   patient's bearer token.
+  Incomplete non-emergency intakes return `409`; deterministic red-flag
+  escalations may be summarized immediately.
 - `POST /upload` requires a patient bearer token and multipart form fields
   `session_id` plus a PDF `file`. The session must belong to that patient. The
   response includes the report UUID and number of embedded chunks.

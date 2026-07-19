@@ -12,6 +12,35 @@ class ChatResponse(BaseModel):
     session_id: UUID
     reply: str
     emergency_triggered: bool
+    intake_complete: bool
+
+
+class IntakeCoverage(BaseModel):
+    onset_and_duration: bool
+    location: bool
+    character_or_quality: bool
+    severity_zero_to_ten: bool
+    aggravating_or_relieving_factors: bool
+    associated_symptoms: bool
+    relevant_history_and_prior_episodes: bool
+    medications_and_supplements: bool
+    known_allergies: bool
+
+    @property
+    def complete(self) -> bool:
+        return all(self.model_dump().values())
+
+
+class IntakeTurnDecision(BaseModel):
+    coverage: IntakeCoverage
+    transition: str = Field(
+        default="",
+        description="Optional brief statement, containing no question.",
+    )
+    follow_up_question: str | None = Field(
+        default=None,
+        description="Exactly one intake question when coverage is incomplete.",
+    )
 
 
 class SummaryRequest(BaseModel):

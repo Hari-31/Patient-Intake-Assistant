@@ -2,7 +2,7 @@ import json
 import unittest
 from uuid import uuid4
 
-from app.models.chats import MedicalSummary
+from app.models.chats import IntakeTurnDecision, MedicalSummary
 from app.services.chat_service import ChatService
 from app.services.conversation_store import Message
 
@@ -45,9 +45,35 @@ class FakeRAG:
 class CapturingLLM:
     def __init__(self):
         self.calls = []
+        self.intake_complete = False
 
     async def complete(self, messages, *, response_model=None):
-        self.calls.append(messages)
+        self.calls.append((messages, response_model))
+        if response_model is IntakeTurnDecision:
+            covered = self.intake_complete
+            return json.dumps(
+                {
+                    "coverage": {
+                        "onset_and_duration": covered,
+                        "location": covered,
+                        "character_or_quality": covered,
+                        "severity_zero_to_ten": covered,
+                        "aggravating_or_relieving_factors": covered,
+                        "associated_symptoms": covered,
+                        "relevant_history_and_prior_episodes": covered,
+                        "medications_and_supplements": covered,
+                        "known_allergies": covered,
+                    },
+                    "transition": (
+                        "Your uploaded report lists an HbA1c of 8.2%."
+                        if not covered
+                        else ""
+                    ),
+                    "follow_up_question": (
+                        None if covered else "When did the thirst begin?"
+                    ),
+                }
+            )
         if response_model is MedicalSummary:
             return json.dumps(
                 {
@@ -60,7 +86,7 @@ class CapturingLLM:
                     "suggested_questions_for_doctor": [],
                 }
             )
-        return "Your uploaded report lists an HbA1c of 8.2%. When did the thirst begin?"
+        raise AssertionError("Unexpected unstructured LLM request")
 
 
 class RAGChatTests(unittest.IsolatedAsyncioTestCase):
@@ -75,12 +101,23 @@ class RAGChatTests(unittest.IsolatedAsyncioTestCase):
         response = await service.chat(
             patient_id, session_id, "Could my report relate to increased thirst?"
         )
+        llm.intake_complete = True
         summary = await service.summarize(patient_id, session_id)
 
         self.assertIn("HbA1c of 8.2%", response.reply)
         self.assertIn("HbA1c 8.2%", summary.relevant_history)
         self.assertEqual(len(rag.calls), 2)
-        for call in llm.calls:
+        context_calls = [
+            messages
+            for messages, response_model in llm.calls
+            if response_model is MedicalSummary
+            or any(
+                "REPORT EXCERPTS:" in message.content
+                for message in messages
+                if message.role == "system"
+            )
+        ]
+        for call in context_calls:
             context = "\n".join(
                 message.content for message in call if message.role == "system"
             )
