@@ -1,5 +1,9 @@
 # React Frontend Roadmap
 
+> Status: This is the original FastAPI-oriented plan. The implemented
+> application now uses the Supabase Edge Function described in
+> [the deployment guide](../backend/supabase/README.md).
+
 Roadmap for building the React frontend against the existing FastAPI backend in
 `backend/`.
 

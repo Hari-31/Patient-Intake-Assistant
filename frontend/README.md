@@ -1,6 +1,8 @@
 # Patient Intake Assistant Frontend
 
-React frontend for the FastAPI backend in `backend/`.
+React frontend backed by Supabase Auth, Postgres, Storage, and a Supabase Edge
+Function. The browser does not require the FastAPI server in `backend/` to
+run.
 
 This document describes the current frontend architecture, API contract, setup
 path, security boundaries, and open questions that must be answered before the
@@ -11,26 +13,24 @@ React implementation is treated as product-complete.
 The first implementation is a Vite React TypeScript app with:
 
 - Supabase Auth session management and role-aware routing.
-- Patient signup through `POST /auth/signup`, then Supabase login.
-- Patient intake chat through `POST /chat`.
-- Patient summary generation through `POST /summary`.
-- Patient PDF upload through `POST /upload` with client-side PDF and 10 MB checks.
-- Doctor read-only review through `/doctor/patients`, `/doctor/summaries`, and
-  `/doctor/sessions/{session_id}`.
+- Patient signup through the `patient-intake-api` Edge Function, then
+  Supabase login.
+- Patient intake chat, summaries, PDF report storage/embeddings, and doctor
+  review through that same Supabase-hosted function.
 - Environment validation, typed API client, TanStack Query, React Hook Form,
   Zod validation, Vitest, and React Testing Library setup.
 
-## Backend Context
+## Supabase Backend Context
 
-The current backend is a FastAPI API for an educational patient-intake assistant.
-It supports:
+The Supabase Edge Function is the server-side API for the educational
+patient-intake assistant. It supports:
 
-- Patient account creation through `POST /auth/signup`.
-- Supabase Auth login, with frontend clients using the Supabase anon key.
-- Patient-only chat through `POST /chat`.
-- Patient-only medical summary generation through `POST /summary`.
-- Patient-only PDF report upload through `POST /upload`.
-- Doctor-only read access through `/doctor/*` routes.
+- Patient account creation with the Supabase admin API from the Edge Function.
+- Supabase Auth login, with frontend clients using the Supabase publishable key.
+- Patient-only chat and medical summary generation through OpenAI calls made
+  from the Edge Function.
+- Patient-only PDF report upload and embeddings through private Storage.
+- Doctor-only read access through role and assignment checks in the function.
 - Supabase Postgres persistence for sessions, messages, summaries, reports, and
   patient-doctor assignments.
 
@@ -86,9 +86,8 @@ frontend/
 The frontend should use only public client-safe values:
 
 ```env
-VITE_API_BASE_URL=http://127.0.0.1:8000
 VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=your-public-anon-key
+VITE_SUPABASE_PUBLISHABLE_KEY=your-public-publishable-key
 ```
 
 Never include these backend-only values in frontend code or browser-exposed
@@ -101,12 +100,10 @@ environment variables:
 
 ## Local Development
 
-1. Start the backend from `backend/`.
-2. Confirm `GET /health` returns success.
-3. Configure backend CORS to allow the frontend dev origin, for example
-   `http://localhost:5173`.
-4. Copy `.env.example` to `.env.local` and fill in the `VITE_*` values.
-5. Install dependencies and run the frontend dev server.
+1. Apply the database migrations and deploy `patient-intake-api` as described
+   in [the Supabase deployment guide](../backend/supabase/README.md).
+2. Copy `.env.example` to `.env.local` and fill in the `VITE_*` values.
+3. Install dependencies and run the frontend dev server.
 
 Commands:
 
@@ -132,11 +129,13 @@ All protected requests must send:
 Authorization: Bearer <supabase-access-token>
 ```
 
-### Auth
+### Supabase Edge Function
 
-`POST /auth/signup`
+The browser invokes `patient-intake-api` through the Supabase client. The
+function routes its typed actions internally and verifies the signed-in user's
+role before every patient, report, or doctor operation.
 
-Request:
+Patient signup request:
 
 ```json
 {
@@ -156,13 +155,12 @@ Response:
 }
 ```
 
-Login should use Supabase Auth directly from the frontend. The backend signup
-route creates patient accounts only. There is currently no public backend route
-for creating doctor accounts.
+Login uses Supabase Auth directly from the frontend. The Edge Function creates
+patient accounts only; doctor accounts remain an administrator workflow.
 
 ### Patient Chat
 
-`POST /chat`
+`patient-intake-api` action: `chat`
 
 First request:
 
@@ -202,7 +200,7 @@ Frontend behavior:
 
 ### Patient Summary
 
-`POST /summary`
+`patient-intake-api` action: `summary`
 
 Request:
 
@@ -234,7 +232,7 @@ Frontend behavior:
 
 ### Patient Report Upload
 
-`POST /upload`
+`patient-intake-api` action: `upload_report`
 
 Multipart form fields:
 
@@ -261,7 +259,7 @@ Frontend behavior:
 
 ### Doctor Dashboard
 
-`GET /doctor/patients`
+`patient-intake-api` action: `doctor_patients`
 
 Returns assigned patients:
 
@@ -275,11 +273,12 @@ Returns assigned patients:
 ]
 ```
 
-`GET /doctor/summaries?patient_id=<uuid>`
+`patient-intake-api` action: `doctor_summaries` with an optional
+`patient_id`.
 
 Returns summaries for assigned patients.
 
-`GET /doctor/sessions/{session_id}`
+`patient-intake-api` action: `doctor_session` with `session_id`.
 
 Returns ordered transcript messages and the current summary for an assigned
 patient session.

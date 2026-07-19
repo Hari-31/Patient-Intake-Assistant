@@ -51,8 +51,10 @@ export function PatientWorkspace() {
   });
 
   const uploadMutation = useMutation({
-    mutationFn: ({ activeSessionId, file }: { activeSessionId: string; file: File }) =>
-      apiClient.uploadReport(activeSessionId, file),
+    mutationFn: async ({ activeSessionId, file }: { activeSessionId: string; file: File }) => {
+      const extractedText = await extractPdfText(file);
+      return apiClient.uploadReport(activeSessionId, file, extractedText);
+    },
     onSuccess: (response) => {
       setUploadResult(response);
       setSelectedFile(null);
@@ -261,7 +263,13 @@ export function PatientWorkspace() {
             <div className="panel-header">
               <div>
                 <h2>PDF report</h2>
-                <p>{uploadResult ? `${uploadResult.filename} embedded in ${uploadResult.chunk_count} chunks` : "Attach to the active intake"}</p>
+                <p>
+                  {uploadResult
+                    ? uploadResult.chunk_count > 0
+                      ? uploadResult.filename + " processed into " + uploadResult.chunk_count + " chunks"
+                      : uploadResult.filename + " stored with this intake"
+                    : "Attach to the active intake"}
+                </p>
               </div>
             </div>
             <div
@@ -380,4 +388,37 @@ function toUserError(error: unknown): string {
     return error.message;
   }
   return "The request failed.";
+}
+
+async function extractPdfText(file: File): Promise<string> {
+  const [{ getDocument, GlobalWorkerOptions }, { default: workerUrl }] = await Promise.all([
+    import("pdfjs-dist/legacy/build/pdf.mjs"),
+    import("pdfjs-dist/legacy/build/pdf.worker.mjs?url"),
+  ]);
+  GlobalWorkerOptions.workerSrc = workerUrl;
+  const loadingTask = getDocument({ data: new Uint8Array(await file.arrayBuffer()) });
+  try {
+    const document = await loadingTask.promise;
+    const pages = await Promise.all(
+      Array.from({ length: document.numPages }, async (_, index) => {
+        const page = await document.getPage(index + 1);
+        const content = await page.getTextContent();
+        return content.items
+          .map((item) => ("str" in item ? item.str : ""))
+          .join(" ");
+      }),
+    );
+    const text = pages.join("\n").trim();
+    if (!text) {
+      throw new Error("The PDF does not contain extractable text. Scanned PDFs require OCR.");
+    }
+    return text;
+  } catch (error) {
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error("The PDF could not be read.");
+  } finally {
+    await loadingTask.destroy();
+  }
 }

@@ -19,11 +19,7 @@ try {
   const env = readAppEnv();
   const supabaseClient = createSupabaseBrowserClient(env);
   const apiClient = new ApiClient({
-    baseUrl: env.apiBaseUrl,
-    getAccessToken: async () => {
-      const { data } = await supabaseClient.auth.getSession();
-      return data.session?.access_token ?? null;
-    },
+    supabaseClient,
   });
 
   root.render(

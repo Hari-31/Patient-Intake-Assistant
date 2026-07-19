@@ -37,7 +37,7 @@ const workflowPanels = {
   },
   operations: {
     title: "Protected backend boundaries",
-    body: "Supabase roles, FastAPI authorization, and scoped patient ownership keep the browser experience aligned with backend policy.",
+    body: "Supabase roles, Edge Function authorization, and scoped patient ownership keep the browser experience aligned with backend policy.",
     image:
       "https://images.unsplash.com/photo-1505751172876-fa1923c5c528?auto=format&fit=crop&w=1200&q=80",
     alt: "Medical monitoring equipment in a healthcare environment",

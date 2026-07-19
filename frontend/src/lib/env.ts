@@ -1,17 +1,16 @@
 export type AppEnv = {
-  apiBaseUrl: string;
   supabaseUrl: string;
-  supabaseAnonKey: string;
+  supabasePublishableKey: string;
 };
 
 const requiredEnv = {
-  VITE_API_BASE_URL: "apiBaseUrl",
   VITE_SUPABASE_URL: "supabaseUrl",
-  VITE_SUPABASE_ANON_KEY: "supabaseAnonKey",
+  VITE_SUPABASE_PUBLISHABLE_KEY: "supabasePublishableKey",
 } as const;
 
 const forbiddenSecretNames = [
   "SUPABASE_SERVICE_ROLE_KEY",
+  "SUPABASE_SECRET_KEY",
   "SUPABASE_JWT_SECRET",
   "DATABASE_URL",
   "OPENAI_API_KEY",
@@ -42,8 +41,7 @@ export function readAppEnv(metaEnv: ImportMetaEnv = import.meta.env): AppEnv {
   }
 
   return {
-    apiBaseUrl: metaEnv.VITE_API_BASE_URL.replace(/\/+$/, ""),
-    supabaseUrl: metaEnv.VITE_SUPABASE_URL,
-    supabaseAnonKey: metaEnv.VITE_SUPABASE_ANON_KEY,
+    supabaseUrl: metaEnv.VITE_SUPABASE_URL.replace(/\/+$/, ""),
+    supabasePublishableKey: metaEnv.VITE_SUPABASE_PUBLISHABLE_KEY,
   };
 }

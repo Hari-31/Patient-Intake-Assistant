@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
   ChatRequest,
   ChatResponse,
@@ -11,16 +12,19 @@ import type {
 } from "./types";
 
 type ApiClientOptions = {
-  baseUrl: string;
-  getAccessToken: () => Promise<string | null>;
+  supabaseClient: SupabaseClient;
 };
 
-type RequestOptions = {
-  method?: "GET" | "POST";
-  body?: unknown;
-  authenticated?: boolean;
-  query?: Record<string, string | null | undefined>;
-};
+type EdgeFunctionAction =
+  | "signup_patient"
+  | "chat"
+  | "summary"
+  | "doctor_patients"
+  | "doctor_summaries"
+  | "doctor_session"
+  | "upload_report";
+
+const functionName = "patient-intake-api";
 
 export class ApiError extends Error {
   status: number;
@@ -35,134 +39,81 @@ export class ApiError extends Error {
 }
 
 export class ApiClient {
-  private readonly baseUrl: string;
-  private readonly getAccessToken: () => Promise<string | null>;
+  private readonly supabaseClient: SupabaseClient;
 
   constructor(options: ApiClientOptions) {
-    this.baseUrl = options.baseUrl;
-    this.getAccessToken = options.getAccessToken;
+    this.supabaseClient = options.supabaseClient;
   }
 
   signupPatient(payload: PatientSignupRequest): Promise<PatientSignupResponse> {
-    return this.request("/auth/signup", {
-      method: "POST",
-      body: payload,
-      authenticated: false,
-    });
+    return this.invoke("signup_patient", payload);
   }
 
   chat(payload: ChatRequest): Promise<ChatResponse> {
-    return this.request("/chat", {
-      method: "POST",
-      body: payload,
-    });
+    return this.invoke("chat", payload);
   }
 
   summarize(sessionId: string): Promise<MedicalSummary> {
-    return this.request("/summary", {
-      method: "POST",
-      body: { session_id: sessionId },
-    });
+    return this.invoke("summary", { session_id: sessionId });
   }
 
   listDoctorPatients(): Promise<DoctorPatient[]> {
-    return this.request("/doctor/patients");
+    return this.invoke("doctor_patients", {});
   }
 
   listDoctorSummaries(patientId?: string): Promise<DoctorSummary[]> {
-    return this.request("/doctor/summaries", {
-      query: { patient_id: patientId },
-    });
+    return this.invoke("doctor_summaries", { patient_id: patientId ?? null });
   }
 
   getDoctorSession(sessionId: string): Promise<DoctorSessionTranscript> {
-    return this.request(`/doctor/sessions/${sessionId}`);
+    return this.invoke("doctor_session", { session_id: sessionId });
   }
 
-  async uploadReport(sessionId: string, file: File): Promise<ReportUploadResponse> {
-    const token = await this.requireAccessToken();
+  async uploadReport(sessionId: string, file: File, extractedText: string): Promise<ReportUploadResponse> {
     const form = new FormData();
     form.append("session_id", sessionId);
     form.append("file", file);
-
-    const response = await fetch(`${this.baseUrl}/upload`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-      body: form,
-    });
-
-    return this.parseResponse(response);
+    form.append("extracted_text", extractedText);
+    return this.invoke("upload_report", form);
   }
 
-  private async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-    const url = new URL(`${this.baseUrl}${path}`);
-    Object.entries(options.query ?? {}).forEach(([key, value]) => {
-      if (value) {
-        url.searchParams.set(key, value);
-      }
-    });
+  private async invoke<T>(action: EdgeFunctionAction, payload: Record<string, unknown> | FormData): Promise<T> {
+    const body = payload instanceof FormData ? withAction(payload, action) : { action, ...payload };
+    const { data, error } = await this.supabaseClient.functions.invoke<unknown>(functionName, { body });
 
-    const headers = new Headers();
-    headers.set("Accept", "application/json");
-
-    if (options.body !== undefined) {
-      headers.set("Content-Type", "application/json");
+    if (error) {
+      throw await toApiError(error);
     }
 
-    if (options.authenticated !== false) {
-      headers.set("Authorization", `Bearer ${await this.requireAccessToken()}`);
-    }
-
-    const response = await fetch(url, {
-      method: options.method ?? "GET",
-      headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
-    });
-
-    return this.parseResponse<T>(response);
+    return data as T;
   }
+}
 
-  private async requireAccessToken(): Promise<string> {
-    const token = await this.getAccessToken();
-    if (!token) {
-      throw new ApiError(401, "Your session has expired. Sign in again.");
-    }
-    return token;
+function withAction(form: FormData, action: EdgeFunctionAction): FormData {
+  form.set("action", action);
+  return form;
+}
+
+async function toApiError(error: Error & { context?: unknown }): Promise<ApiError> {
+  const response = error.context;
+  if (response instanceof Response) {
+    const body = await response.clone().json().catch(() => null);
+    return new ApiError(response.status, normalizeErrorDetail(body) || error.message);
   }
-
-  private async parseResponse<T>(response: Response): Promise<T> {
-    const contentType = response.headers.get("content-type") ?? "";
-    const body = contentType.includes("application/json") ? await response.json() : await response.text();
-
-    if (!response.ok) {
-      throw new ApiError(response.status, normalizeErrorDetail(body));
-    }
-
-    return body as T;
-  }
+  return new ApiError(502, error.message || "The Supabase function could not be reached.");
 }
 
 function normalizeErrorDetail(body: unknown): string {
   if (typeof body === "string") {
-    return body || "The request failed.";
+    return body;
   }
-  if (body && typeof body === "object" && "detail" in body) {
-    const detail = (body as { detail: unknown }).detail;
-    if (typeof detail === "string") {
-      return detail;
-    }
-    if (Array.isArray(detail)) {
-      return detail
-        .map((item) => {
-          if (item && typeof item === "object" && "msg" in item) {
-            return String((item as { msg: unknown }).msg);
-          }
-          return String(item);
-        })
-        .join(" ");
+  if (body && typeof body === "object") {
+    for (const key of ["detail", "message", "error"]) {
+      const value = (body as Record<string, unknown>)[key];
+      if (typeof value === "string") {
+        return value;
+      }
     }
   }
-  return "The request failed.";
+  return "";
 }
