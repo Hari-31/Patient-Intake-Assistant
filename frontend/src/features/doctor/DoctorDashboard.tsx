@@ -13,14 +13,14 @@ import { useApiClient } from "../../app/api-context";
 import { Notice } from "../../components/feedback/Notice";
 import { MedicalDisclaimer } from "../../components/feedback/MedicalDisclaimer";
 import { formatDateTime, formatTime } from "../../lib/format";
-import type { MedicalSummary } from "../../lib/types";
+import type { MedicalSummary, TranscriptMessage } from "../../lib/types";
 
 export function DoctorDashboard() {
   const apiClient = useApiClient();
   const queryClient = useQueryClient();
   const [selectedPatientId, setSelectedPatientId] = useState("");
   const [selectedSessionId, setSelectedSessionId] = useState("");
-  const [isTranscriptMinimized, setIsTranscriptMinimized] = useState(false);
+  const [isTranscriptMinimized, setIsTranscriptMinimized] = useState(true);
 
   const patientsQuery = useQuery({
     queryKey: ["doctor", "patients"],
@@ -45,6 +45,19 @@ export function DoctorDashboard() {
   );
   const selectedStatus = sessionQuery.data?.status ?? selectedSummary?.status ?? null;
   const canComplete = selectedStatus === "active" || selectedStatus === "submitted";
+  const transcriptSubtitle = useMemo(() => {
+    if (!selectedSessionId) {
+      return "No session selected";
+    }
+
+    const patientName = sessionQuery.data?.patient_name ?? selectedSummary?.patient_name;
+    const status = statusLabel(selectedStatus);
+    return patientName ? `${patientName} · ${status}` : status;
+  }, [selectedSessionId, selectedStatus, selectedSummary?.patient_name, sessionQuery.data?.patient_name]);
+  const transcriptMessages = useMemo(
+    () => (sessionQuery.data?.messages ?? []).filter(isTranscriptMessageVisible),
+    [sessionQuery.data?.messages],
+  );
 
   const completeMutation = useMutation({
     mutationFn: (sessionId: string) => apiClient.completeDoctorSession(sessionId),
@@ -186,15 +199,11 @@ export function DoctorDashboard() {
               <MessageSquareText aria-hidden="true" size={18} />
               <span>
                 <strong>Transcript</strong>
-                <small>
-                  {selectedSummary
-                    ? `${selectedSummary.session_id} · ${statusLabel(selectedStatus)}`
-                    : "No session selected"}
-                </small>
+                <small>{transcriptSubtitle}</small>
               </span>
             </span>
             <span className="transcript-expand-label">
-              Expand
+              Click to expand
               <Maximize2 aria-hidden="true" size={17} />
             </span>
           </button>
@@ -205,11 +214,7 @@ export function DoctorDashboard() {
                 <MessageSquareText aria-hidden="true" size={18} />
                 <div>
                   <h2>Transcript</h2>
-                  <p>
-                    {selectedSummary
-                      ? `${selectedSummary.session_id} · ${statusLabel(selectedStatus)}`
-                      : "No session selected"}
-                  </p>
+                  <p>{transcriptSubtitle}</p>
                 </div>
               </div>
               <button
@@ -231,8 +236,9 @@ export function DoctorDashboard() {
                 {sessionQuery.error.message}
               </Notice>
             ) : sessionQuery.data ? (
+              transcriptMessages.length > 0 ? (
               <div className="transcript-list">
-                {sessionQuery.data.messages.map((message) => (
+                {transcriptMessages.map((message) => (
                   <article key={`${message.role}-${message.created_at}-${message.content.slice(0, 16)}`} className={`transcript-message ${message.role}`}>
                     <header>
                       <strong>{message.role}</strong>
@@ -242,6 +248,12 @@ export function DoctorDashboard() {
                   </article>
                 ))}
               </div>
+              ) : (
+                <div className="empty-state">
+                  <MessageSquareText aria-hidden="true" size={24} />
+                  <span>No transcript messages.</span>
+                </div>
+              )
             ) : (
               <div className="empty-state">
                 <UserRoundSearch aria-hidden="true" size={24} />
@@ -253,6 +265,15 @@ export function DoctorDashboard() {
         )}
       </section>
     </section>
+  );
+}
+
+function isTranscriptMessageVisible(message: TranscriptMessage) {
+  return (
+    (message.role === "patient" ||
+      message.role === "assistant" ||
+      message.role === "system") &&
+    message.content.trim().length > 0
   );
 }
 
