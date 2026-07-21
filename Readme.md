@@ -8,6 +8,8 @@ Patients can also attach a PDF report. The assistant reads it, and if what the p
 
 This is an educational project. It is decision support, not a diagnostic tool, and it says so on every screen.
 
+**Demo video:** [watch a walkthrough of the project on YouTube](https://www.youtube.com/watch?v=pjS1bfQAtXQ)
+
 ## Screens
 
 **Landing** — start a new request or check status; separate sign-in for doctors.
@@ -189,6 +191,12 @@ python -m unittest discover -s tests -v
 Frontend: `npm test` from `frontend/`.
 
 Coverage worth knowing about: cross-patient isolation, JWT verification, red-flag negation, RAG chunk integrity and patient scoping, session lifecycle migrations, and the follow-up question builder.
+
+## How it was built
+
+The chat runs on GPT-5.6 mini. Every intake turn asks it for structured JSON — one follow-up question plus a coverage boolean for each of the nine topics — so the interview logic is something the server can check rather than prose I have to parse. Mini was a deliberate choice: this is a back-and-forth conversation, and the patient feels every extra second of latency, so a faster model mattered more than a bigger one.
+
+Codex did the work around the model. I leaned on it to write the test suite — the cross-patient isolation checks, the red-flag negation cases, the RAG chunking tests — and to chase down bugs I couldn't place on my own. The one I remember most: a completed intake that was quietly still accepting new messages after it should have closed. What made Codex genuinely useful was that it worked from the actual codebase instead of guessing — I could describe a symptom and it would trace it back to the cause, then help me fix the frontend and backend sides together. For a solo build, it was the closest thing to having a second engineer on the project.
 
 ## Limitations
 
