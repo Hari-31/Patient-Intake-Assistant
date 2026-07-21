@@ -50,21 +50,23 @@ A few design decisions worth knowing:
 Backend (PowerShell):
 
 ```powershell
+cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 copy .env.example .env        # then fill in the values
 python scripts/apply_migrations.py
-uvicorn app.main:app --reload
+python -m uvicorn app.main:app --reload --port 8000
 ```
 
 Frontend:
 
 ```powershell
+# Run from the repository root in a second terminal.
 cd frontend
-npm install
+npm.cmd install
 copy .env.example .env.local  # then fill in the values
-npm run dev
+npm.cmd run dev
 ```
 
 API docs live at `http://127.0.0.1:8000/docs`.
@@ -96,7 +98,7 @@ VITE_SUPABASE_ANON_KEY=    # or VITE_SUPABASE_PUBLISHABLE_KEY
 | `GET /health` | — | liveness check |
 | `POST /auth/signup` | — | creates a patient account server-side; role is set by the server, never the caller |
 | `POST /chat` | patient | send a message; without `session_id`, resumes the patient's active request or creates one. Response includes `resumed` and `intake_complete`; closed sessions return `409` |
-| `POST /summary` | patient | structured summary for a completed intake (`409` if still incomplete, unless a red-flag escalation ended it) |
+| `POST /summary` | patient | returns the cached structured summary; the backend generates and persists it automatically when an intake completes or escalates |
 | `POST /upload` | patient | attach a text-based PDF report (≤10 MB) to an owned active request; extracted text is normalized to compact markdown before chunking and embedding |
 | `GET /sessions/active` | patient | return the patient's active request and ordered messages, or `404` when none exists |
 | `POST /sessions/{id}/abandon` | patient | close an active request as abandoned so a new intake can be started |
@@ -118,6 +120,8 @@ bearer token, and assign existing patients by email:
 ```powershell
 # This changes policy only for the current PowerShell process.
 Set-ExecutionPolicy -Scope Process Bypass
+
+cd backend
 
 # Edit the marked values at the top of each script, then run them.
 # The doctor-token script prompts securely for the password.
@@ -152,22 +156,25 @@ ship the scripts or that key to a browser/client environment.
 ## Project layout
 
 ```
-app/
-  routers/        thin endpoints (chats, reports, doctors, auth, health)
-  services/       the actual logic: chat orchestration, LLM client,
-                  RAG, safety rules, doctor reader, conversation store
-  dependencies/   auth gate (JWT verification, role checks)
-  models/         pydantic shapes
-frontend/         React app (patient chat + doctor dashboard)
-supabase/
-  migrations/     schema, RLS policies, pgvector setup
-tests/            backend tests
+backend/
+  app/
+    routers/        thin endpoints (chats, reports, doctors, auth, health)
+    services/       chat orchestration, LLM, RAG, safety, and persistence
+    dependencies/   auth gate (JWT verification and role checks)
+    models/         Pydantic request and response models
+  scripts/          migration and trusted admin helpers
+  supabase/
+    migrations/     schema, RLS policies, and pgvector setup
+  tests/            backend tests
+  requirements.txt
+frontend/           React app (patient chat and doctor dashboard)
 ```
 
 ## Testing
 
 ```powershell
-pytest
+cd backend
+python -m unittest discover -s tests -v
 ```
 
 Frontend tests run with `npm test` from `frontend/`.

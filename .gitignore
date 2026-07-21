@@ -16,6 +16,12 @@ htmlcov/
 !.env.example
 .vscode/
 .idea/
+.codex/
+.agents/
+
+# Local database dumps (may contain copied user or clinical data)
+/data.sql
+/public_data.sql
 
 # Runtime and OS-generated files
 *.log
