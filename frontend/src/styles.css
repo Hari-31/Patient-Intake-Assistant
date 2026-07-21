@@ -1471,6 +1471,13 @@ button:focus-visible {
   cursor: not-allowed;
 }
 
+.pdf-upload-button {
+  min-height: 36px;
+  justify-self: end;
+  padding: 0 12px;
+  font-size: 0.88rem;
+}
+
 .filter-control {
   min-width: min(100%, 300px);
 }
@@ -1763,6 +1770,7 @@ button:focus-visible {
   color: var(--primary-strong);
   font-size: 0.86rem;
   font-weight: 780;
+  white-space: nowrap;
 }
 
 .transcript-dock-body {
@@ -2071,6 +2079,10 @@ button:focus-visible {
 
   .send-button {
     min-height: 44px;
+  }
+
+  .pdf-upload-button {
+    justify-self: stretch;
   }
 
   .message-bubble {
