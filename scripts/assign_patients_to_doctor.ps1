@@ -5,8 +5,12 @@ $ErrorActionPreference = "Stop"
 $DoctorEmail = "doctor1@doctor.test"
 $PatientEmails = @(
     
-    "test2@test.com",
-    "test3@test.com"
+    "chaithanya.chiranjeevi.m.c.3@gmail.com",
+    "test4@test.com",
+    "test6@test.com",
+    "test7@test.com",
+    "test8@test.com"
+
 )
 # ===========================================================
 
