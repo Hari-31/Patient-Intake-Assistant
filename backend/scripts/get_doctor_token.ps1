@@ -2,8 +2,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # ======================== EDIT HERE ========================
-$DoctorEmail = "doctor3@doctor.test"
-$DoctorName = "Doctor 3"
+$DoctorEmail = "Nolan@doctor.com"
+$DoctorName = "Nolan"
 $ShowToken = $false  # Change to $true to also print the bearer token.
 # ===========================================================
 

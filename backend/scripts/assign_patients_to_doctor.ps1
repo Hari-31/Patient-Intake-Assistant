@@ -2,10 +2,10 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # ======================== EDIT HERE ========================
-$DoctorEmail = "doctor3@doctor.test"
+$DoctorEmail = "Nolan@doctor.com"
 $PatientEmails = @(
     
-    "test11@test.com"
+    "lewis@gmail.com"
 
 )
 # ===========================================================
