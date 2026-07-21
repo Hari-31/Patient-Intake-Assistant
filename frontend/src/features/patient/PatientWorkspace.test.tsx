@@ -30,8 +30,27 @@ function patientSession(): Session {
 }
 
 
-function renderWorkspace(fetchMock: ReturnType<typeof vi.fn>) {
-  vi.stubGlobal("fetch", fetchMock);
+function renderWorkspace(
+  fetchMock: ReturnType<typeof vi.fn>,
+  activeSession: object | null = null,
+) {
+  const routedFetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).endsWith("/sessions/active")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify(
+            activeSession ?? { detail: "No active intake was found." },
+          ),
+          {
+            status: activeSession ? 200 : 404,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      );
+    }
+    return fetchMock(input, init);
+  });
+  vi.stubGlobal("fetch", routedFetch);
   const session = patientSession();
   const supabaseClient = {
     auth: {
@@ -76,6 +95,7 @@ describe("PatientWorkspace safety", () => {
     );
     renderWorkspace(fetchMock);
     const textarea = screen.getByRole("textbox");
+    await waitFor(() => expect(textarea).toBeEnabled());
     const form = screen.getByRole("button", { name: "Send" }).closest("form");
     expect(form).not.toBeNull();
     fireEvent.change(textarea, { target: { value: "My head hurts" } });
@@ -100,6 +120,7 @@ describe("PatientWorkspace safety", () => {
     );
     renderWorkspace(fetchMock);
     const textarea = screen.getByRole("textbox");
+    await waitFor(() => expect(textarea).toBeEnabled());
     fireEvent.change(textarea, { target: { value: "I have chest pain" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
@@ -113,7 +134,7 @@ describe("PatientWorkspace safety", () => {
       new Response(
         JSON.stringify({
           session_id: "session-1",
-          reply: "Thank you. Your intake is complete, and the doctor will see you soon.",
+          reply: "Thank you. Your intake assessment is complete. The doctor will see you soon. Please wait for further instructions. You may log out now.",
           emergency_triggered: false,
           intake_complete: true,
         }),
@@ -121,13 +142,46 @@ describe("PatientWorkspace safety", () => {
       ),
     );
     renderWorkspace(fetchMock);
+    await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
     fireEvent.change(screen.getByRole("textbox"), {
       target: { value: "I cannot answer the remaining question." },
     });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     expect(await screen.findByText("Medical summary")).toBeInTheDocument();
+    expect(screen.getByText("Intake assessment complete")).toBeInTheDocument();
+    expect(screen.getByText(/may log out using the sign-out button/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Intake complete" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Generate" })).toBeEnabled();
+  });
+
+  it("restores the active transcript and abandons it before starting fresh", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    renderWorkspace(fetchMock, {
+      session_id: "session-active",
+      status: "active",
+      messages: [
+        {
+          role: "patient",
+          content: "I have a headache.",
+          created_at: "2026-07-21T10:00:00Z",
+        },
+        {
+          role: "assistant",
+          content: "When did it begin?",
+          created_at: "2026-07-21T10:00:01Z",
+        },
+      ],
+    });
+
+    expect(await screen.findByText("I have a headache.")).toBeInTheDocument();
+    expect(screen.getByText("When did it begin?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Start new intake" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(String(fetchMock.mock.calls[0][0])).toContain(
+      "/sessions/session-active/abandon",
+    );
+    await waitFor(() => expect(screen.getByText("No messages yet.")).toBeInTheDocument());
   });
 });

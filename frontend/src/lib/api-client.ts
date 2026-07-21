@@ -1,6 +1,7 @@
 import type {
   ChatRequest,
   ChatResponse,
+  ActiveSession,
   DoctorPatient,
   DoctorSessionTranscript,
   DoctorSummary,
@@ -66,6 +67,21 @@ export class ApiClient {
       method: "POST",
       body: { session_id: sessionId },
     });
+  }
+
+  async getActiveSession(): Promise<ActiveSession | null> {
+    try {
+      return await this.request("/sessions/active");
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  abandonSession(sessionId: string): Promise<void> {
+    return this.request(`/sessions/${sessionId}/abandon`, { method: "POST" });
   }
 
   listDoctorPatients(): Promise<DoctorPatient[]> {

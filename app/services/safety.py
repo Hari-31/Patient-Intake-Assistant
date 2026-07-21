@@ -22,7 +22,7 @@ RED_FLAG_RULES = (
     RedFlag("loss of consciousness or seizure", ("passed out", "unconscious", "not waking up", "having a seizure", "seizure now")),
     RedFlag("severe bleeding", ("bleeding heavily", "won't stop bleeding", "will not stop bleeding", "vomiting blood", "vomited blood", "coughing up blood", "black tarry stools", "black, tarry stools", "tarry stools")),
     RedFlag("severe allergic reaction", ("throat is closing", "throat closing", "swollen tongue", "anaphylaxis")),
-    RedFlag("immediate self-harm risk", ("kill myself", "end my life", "suicidal", "hurt myself")),
+    RedFlag("immediate self-harm risk", ("kill myself", "end my life", "suicidal", "hurt myself","ending my life","want to die", "want to kill myself", "want to end my life", "want to hurt myself")),
 )
 
 

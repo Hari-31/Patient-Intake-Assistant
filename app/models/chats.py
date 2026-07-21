@@ -1,3 +1,6 @@
+from datetime import datetime
+from enum import Enum
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -13,6 +16,26 @@ class ChatResponse(BaseModel):
     reply: str
     emergency_triggered: bool
     intake_complete: bool
+    resumed: bool = False
+
+
+class SessionStatus(str, Enum):
+    active = "active"
+    completed = "completed"
+    escalated = "escalated"
+    abandoned = "abandoned"
+
+
+class SessionMessage(BaseModel):
+    role: Literal["patient", "assistant", "system"]
+    content: str
+    created_at: datetime
+
+
+class ActiveSessionResponse(BaseModel):
+    session_id: UUID
+    status: SessionStatus
+    messages: list[SessionMessage]
 
 
 class IntakeCoverage(BaseModel):
@@ -33,9 +56,20 @@ class IntakeCoverage(BaseModel):
 
 class IntakeTurnDecision(BaseModel):
     coverage: IntakeCoverage
+    report_question_answered: bool = Field(
+        default=False,
+        description=(
+            "True only when this turn answers a direct question about the "
+            "patient's uploaded report and must not ask an intake question."
+        ),
+    )
     transition: str = Field(
         default="",
-        description="Optional brief statement, containing no question.",
+        description=(
+            "A brief acknowledgement of the patient's previous answer, one "
+            "short sentence maximum. Must never contain a question or repeat "
+            "any part of follow_up_question."
+        ),
     )
     follow_up_question: str | None = Field(
         default=None,

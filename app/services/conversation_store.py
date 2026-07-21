@@ -1,6 +1,7 @@
 import asyncio
 import os
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -15,6 +16,19 @@ class Message:
     content: str
 
 
+@dataclass(frozen=True)
+class StoredMessage:
+    role: str
+    content: str
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class ActiveSession:
+    session_id: UUID
+    messages: list[StoredMessage]
+
+
 class ConversationStoreError(RuntimeError):
     pass
 
@@ -27,8 +41,24 @@ class SessionNotFoundError(ConversationStoreError):
     pass
 
 
+class SessionClosedError(ConversationStoreError):
+    pass
+
+
 class ConversationStore(Protocol):
     async def create_session(self, patient_id: UUID) -> UUID: ...
+
+    async def get_or_create_active_session(
+        self, patient_id: UUID
+    ) -> tuple[UUID, bool]: ...
+
+    async def get_active_session(
+        self, patient_id: UUID
+    ) -> ActiveSession | None: ...
+
+    async def close_session(
+        self, patient_id: UUID, session_id: UUID, status: str
+    ) -> None: ...
 
     async def add(
         self, patient_id: UUID, session_id: UUID, message: Message
@@ -64,23 +94,98 @@ class PostgresConversationStore:
         )
 
     async def create_session(self, patient_id: UUID) -> UUID:
-        return await asyncio.to_thread(self._create_session_sync, patient_id)
+        session_id, _ = await self.get_or_create_active_session(patient_id)
+        return session_id
 
-    def _create_session_sync(self, patient_id: UUID) -> UUID:
+    async def get_or_create_active_session(
+        self, patient_id: UUID
+    ) -> tuple[UUID, bool]:
+        return await asyncio.to_thread(
+            self._get_or_create_active_session_sync, patient_id
+        )
+
+    def _get_or_create_active_session_sync(
+        self, patient_id: UUID
+    ) -> tuple[UUID, bool]:
         try:
             with self._connection() as connection:
                 row = connection.execute(
                     """
+                    select id from public.sessions
+                    where patient_id = %s and status = 'active'
+                    """,
+                    (patient_id,),
+                ).fetchone()
+                if row is not None:
+                    return row[0], True
+
+                row = connection.execute(
+                    """
                     insert into public.sessions (patient_id)
                     values (%s)
+                    on conflict (patient_id) where status = 'active'
+                    do nothing
                     returning id
                     """,
                     (patient_id,),
                 ).fetchone()
-                return row[0]
+                if row is not None:
+                    return row[0], False
+
+                row = connection.execute(
+                    """
+                    select id from public.sessions
+                    where patient_id = %s and status = 'active'
+                    """,
+                    (patient_id,),
+                ).fetchone()
+                if row is None:
+                    raise ConversationStoreError(
+                        "Could not resolve the active conversation session."
+                    )
+                return row[0], True
         except psycopg.Error as exc:
             raise ConversationStoreError(
-                "Could not create a conversation session."
+                "Could not create or resume a conversation session."
+            ) from exc
+
+    async def get_active_session(
+        self, patient_id: UUID
+    ) -> ActiveSession | None:
+        return await asyncio.to_thread(self._get_active_session_sync, patient_id)
+
+    def _get_active_session_sync(
+        self, patient_id: UUID
+    ) -> ActiveSession | None:
+        try:
+            with self._connection() as connection:
+                with connection.cursor() as cursor:
+                    row = cursor.execute(
+                        """
+                        select id from public.sessions
+                        where patient_id = %s and status = 'active'
+                        """,
+                        (patient_id,),
+                    ).fetchone()
+                    if row is None:
+                        return None
+                    session_id = row[0]
+                    cursor.execute(
+                        """
+                        select role, content, created_at
+                        from public.messages
+                        where session_id = %s
+                        order by created_at, id
+                        """,
+                        (session_id,),
+                    )
+                    return ActiveSession(
+                        session_id=session_id,
+                        messages=[StoredMessage(*message) for message in cursor.fetchall()],
+                    )
+        except psycopg.Error as exc:
+            raise ConversationStoreError(
+                "Could not load the active conversation session."
             ) from exc
 
     async def add(
@@ -100,7 +205,7 @@ class PostgresConversationStore:
                         insert into public.messages (session_id, role, content)
                         select id, %s, %s
                         from public.sessions
-                        where id = %s and patient_id = %s
+                        where id = %s and patient_id = %s and status = 'active'
                         returning id
                         """,
                         (
@@ -111,7 +216,7 @@ class PostgresConversationStore:
                         ),
                     ).fetchone()
                     if inserted_message is None:
-                        raise SessionNotFoundError(str(session_id))
+                        self._raise_missing_or_closed(cursor, patient_id, session_id)
 
                     cursor.execute(
                         """
@@ -146,6 +251,63 @@ class PostgresConversationStore:
             raise ConversationStoreError(
                 "Could not save the conversation message."
             ) from exc
+
+    async def close_session(
+        self, patient_id: UUID, session_id: UUID, status: str
+    ) -> None:
+        if status not in {"completed", "escalated", "abandoned"}:
+            raise ValueError("A session can only transition to a terminal status.")
+        await asyncio.to_thread(
+            self._close_session_sync, patient_id, session_id, status
+        )
+
+    def _close_session_sync(
+        self, patient_id: UUID, session_id: UUID, status: str
+    ) -> None:
+        try:
+            with self._connection() as connection:
+                with connection.cursor() as cursor:
+                    updated = cursor.execute(
+                        """
+                        update public.sessions
+                        set status = %s
+                        where id = %s and patient_id = %s and status = 'active'
+                        returning id
+                        """,
+                        (status, session_id, patient_id),
+                    ).fetchone()
+                    if updated is None:
+                        self._raise_missing_or_closed(cursor, patient_id, session_id)
+                    cursor.execute(
+                        """
+                        insert into public.audit_log (session_id, event_type, content)
+                        values (%s, %s, %s)
+                        """,
+                        (
+                            session_id,
+                            f"session.{status}",
+                            Jsonb({"status": status}),
+                        ),
+                    )
+        except psycopg.Error as exc:
+            raise ConversationStoreError(
+                "Could not update the conversation session."
+            ) from exc
+
+    @staticmethod
+    def _raise_missing_or_closed(
+        cursor: psycopg.Cursor, patient_id: UUID, session_id: UUID
+    ) -> None:
+        row = cursor.execute(
+            """
+            select status from public.sessions
+            where id = %s and patient_id = %s
+            """,
+            (session_id, patient_id),
+        ).fetchone()
+        if row is None:
+            raise SessionNotFoundError(str(session_id))
+        raise SessionClosedError(str(session_id))
 
     async def get(self, patient_id: UUID, session_id: UUID) -> list[Message]:
         return await asyncio.to_thread(self._get_sync, patient_id, session_id)

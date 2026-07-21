@@ -22,6 +22,15 @@ export type ChatResponse = {
   reply: string;
   emergency_triggered: boolean;
   intake_complete: boolean;
+  resumed: boolean;
+};
+
+export type SessionStatus = "active" | "completed" | "escalated" | "abandoned";
+
+export type ActiveSession = {
+  session_id: string;
+  status: SessionStatus;
+  messages: TranscriptMessage[];
 };
 
 export type MedicalSummary = {

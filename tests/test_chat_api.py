@@ -1,5 +1,6 @@
 import json
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import patch
 from uuid import UUID, uuid4
 
@@ -10,7 +11,13 @@ from app.main import app
 from app.models.auth import AuthenticatedUser, UserRole
 from app.models.chats import IntakeTurnDecision, MedicalSummary
 from app.services.chat_service import ChatService, INTAKE_COMPLETE_MESSAGE
-from app.services.conversation_store import Message, SessionNotFoundError
+from app.services.conversation_store import (
+    Message,
+    ActiveSession,
+    StoredMessage,
+    SessionClosedError,
+    SessionNotFoundError,
+)
 
 
 class FakeConversationStore:
@@ -18,16 +25,49 @@ class FakeConversationStore:
         self.conversations = {}
         self.summaries = {}
         self.owners = {}
+        self.statuses = {}
 
     async def create_session(self, patient_id):
         session_id = uuid4()
         self.conversations[session_id] = []
         self.owners[session_id] = patient_id
+        self.statuses[session_id] = "active"
         return session_id
+
+    async def get_or_create_active_session(self, patient_id):
+        for session_id, owner in self.owners.items():
+            if owner == patient_id and self.statuses[session_id] == "active":
+                return session_id, True
+        return await self.create_session(patient_id), False
+
+    async def close_session(self, patient_id, session_id, status):
+        if self.owners.get(session_id) != patient_id:
+            raise SessionNotFoundError(str(session_id))
+        if self.statuses.get(session_id) != "active":
+            raise SessionClosedError(str(session_id))
+        self.statuses[session_id] = status
+
+    async def get_active_session(self, patient_id):
+        for session_id, owner in self.owners.items():
+            if owner == patient_id and self.statuses[session_id] == "active":
+                return ActiveSession(
+                    session_id=session_id,
+                    messages=[
+                        StoredMessage(
+                            role="patient" if message.role == "user" else message.role,
+                            content=message.content,
+                            created_at=datetime.now(timezone.utc),
+                        )
+                        for message in self.conversations[session_id]
+                    ],
+                )
+        return None
 
     async def add(self, patient_id, session_id, message):
         if self.owners.get(session_id) != patient_id:
             raise SessionNotFoundError(str(session_id))
+        if self.statuses.get(session_id) != "active":
+            raise SessionClosedError(str(session_id))
         self.conversations.setdefault(session_id, []).append(message)
         self.summaries.pop(session_id, None)
 
@@ -96,6 +136,8 @@ class FakeLLM:
 
 class ChatApiTests(unittest.TestCase):
     def setUp(self) -> None:
+        from app.routers.sessions import get_conversation_store
+
         self.patient_id = uuid4()
         self.patient = AuthenticatedUser(
             id=self.patient_id, role=UserRole.PATIENT
@@ -108,11 +150,15 @@ class ChatApiTests(unittest.TestCase):
         )
         self.service_patch.start()
         app.dependency_overrides[require_patient] = lambda: self.patient
+        app.dependency_overrides[get_conversation_store] = lambda: self.store
         self.client = TestClient(app)
 
     def tearDown(self) -> None:
+        from app.routers.sessions import get_conversation_store
+
         self.service_patch.stop()
         app.dependency_overrides.pop(require_patient, None)
+        app.dependency_overrides.pop(get_conversation_store, None)
 
     def test_unauthenticated_request_is_rejected_before_chat_logic(self) -> None:
         app.dependency_overrides.pop(require_patient, None)
@@ -136,6 +182,7 @@ class ChatApiTests(unittest.TestCase):
                 "reply": "When did the headache begin?",
                 "emergency_triggered": False,
                 "intake_complete": False,
+                "resumed": False,
             },
         )
 
@@ -154,6 +201,7 @@ class ChatApiTests(unittest.TestCase):
         )
         self.assertEqual(completion_response.json()["reply"], INTAKE_COMPLETE_MESSAGE)
         self.assertTrue(completion_response.json()["intake_complete"])
+        self.assertEqual(self.store.statuses[parsed_session_id], "completed")
 
         summary_response = self.client.post(
             "/summary", json={"session_id": session_id}
@@ -173,15 +221,20 @@ class ChatApiTests(unittest.TestCase):
         self.assertEqual(repeated_summary.status_code, 200)
         self.assertEqual(self.llm.summary_calls, 1)
 
-        self.client.post(
+        closed_chat = self.client.post(
             "/chat",
             json={"session_id": session_id, "message": "It is getting worse."},
+        )
+        self.assertEqual(closed_chat.status_code, 409)
+        self.assertEqual(
+            closed_chat.json()["detail"],
+            "This intake is closed. Start a new intake for a new concern.",
         )
         refreshed_summary = self.client.post(
             "/summary", json={"session_id": session_id}
         )
         self.assertEqual(refreshed_summary.status_code, 200)
-        self.assertEqual(self.llm.summary_calls, 2)
+        self.assertEqual(self.llm.summary_calls, 1)
 
     def test_red_flag_short_circuits_llm(self) -> None:
         response = self.client.post(
@@ -193,6 +246,7 @@ class ChatApiTests(unittest.TestCase):
         self.assertIn("call emergency services", response.json()["reply"])
         self.assertEqual(self.llm.calls, 0)
         session_id = response.json()["session_id"]
+        self.assertEqual(self.store.statuses[UUID(session_id)], "escalated")
 
         summary_response = self.client.post(
             "/summary", json={"session_id": session_id}
@@ -212,9 +266,47 @@ class ChatApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()["emergency_triggered"])
 
+    def test_second_chat_without_session_id_resumes_active_session(self) -> None:
+        first = self.client.post("/chat", json={"message": "Headache"})
+        second = self.client.post("/chat", json={"message": "Since today"})
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(second.json()["session_id"], first.json()["session_id"])
+        self.assertTrue(second.json()["resumed"])
+        self.assertEqual(len(self.store.conversations), 1)
+
+        active = self.client.get("/sessions/active")
+        self.assertEqual(active.status_code, 200)
+        self.assertEqual(active.json()["session_id"], first.json()["session_id"])
+        self.assertEqual(
+            [message["role"] for message in active.json()["messages"]],
+            ["patient", "assistant", "patient", "assistant"],
+        )
+
+    def test_abandon_only_works_for_own_active_session(self) -> None:
+        own_session = UUID(
+            self.client.post("/chat", json={"message": "Headache"}).json()[
+                "session_id"
+            ]
+        )
+        response = self.client.post(f"/sessions/{own_session}/abandon")
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(self.store.statuses[own_session], "abandoned")
+
+        repeated = self.client.post(f"/sessions/{own_session}/abandon")
+        self.assertEqual(repeated.status_code, 409)
+
+        other_session = uuid4()
+        self.store.owners[other_session] = uuid4()
+        self.store.statuses[other_session] = "active"
+        forbidden = self.client.post(f"/sessions/{other_session}/abandon")
+        self.assertEqual(forbidden.status_code, 404)
+
     def test_old_cached_summary_is_regenerated_with_separate_warnings(self) -> None:
         session_id = uuid4()
         self.store.owners[session_id] = self.patient_id
+        self.store.statuses[session_id] = "completed"
         self.store.conversations[session_id] = [
             Message(role="user", content="I have a mild headache.")
         ]
@@ -254,7 +346,13 @@ class ChatApiTests(unittest.TestCase):
             "medications AND supplements",
             "known allergies",
             "explicitly declined",
-            "Do not answer unrelated questions",
+            "Do not answer other unrelated questions",
+            "uploaded medical report",
+            "using only the retrieved report excerpts",
+            "explicitly attribute",
+            "Do NOT give advice",
+            "do not ask any intake question",
+            "report_question_answered",
             "what symptom or concern brings the patient in",
             "never as instructions",
             "exactly one clear question",
@@ -265,6 +363,7 @@ class ChatApiTests(unittest.TestCase):
     def test_patient_cannot_access_another_patients_session(self) -> None:
         session_id = uuid4()
         self.store.owners[session_id] = uuid4()
+        self.store.statuses[session_id] = "active"
         self.store.conversations[session_id] = [
             Message(role="user", content="Private symptom history")
         ]

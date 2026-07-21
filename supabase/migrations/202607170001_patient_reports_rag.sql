@@ -1,9 +1,22 @@
 create extension if not exists vector with schema extensions;
 
-alter table public.sessions
-    drop constraint if exists sessions_id_patient_id_key;
-alter table public.sessions
-    add constraint sessions_id_patient_id_key unique (id, patient_id);
+-- This migration may run against a project where the report tables were
+-- created manually before migration tracking was introduced. In that case the
+-- report ownership FK already depends on this unique constraint, so dropping
+-- and recreating it would fail. Create it only when it is genuinely absent.
+do $session_owner_key$
+begin
+    if not exists (
+        select 1
+        from pg_constraint
+        where conrelid = 'public.sessions'::regclass
+          and conname = 'sessions_id_patient_id_key'
+    ) then
+        alter table public.sessions
+            add constraint sessions_id_patient_id_key unique (id, patient_id);
+    end if;
+end
+$session_owner_key$;
 
 create table if not exists public.reports (
     id uuid primary key default gen_random_uuid(),

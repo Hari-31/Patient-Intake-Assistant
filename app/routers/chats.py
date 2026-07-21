@@ -14,6 +14,7 @@ from app.services.chat_service import (
 )
 from app.services.conversation_store import (
     ConversationStoreError,
+    SessionClosedError,
     SessionNotFoundError,
     conversation_store,
 )
@@ -68,6 +69,11 @@ async def chat(
                 "That session does not exist. Omit session_id to start a new "
                 "conversation, or use the UUID returned by the first /chat call."
             ),
+        ) from exc
+    except SessionClosedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This intake is closed. Start a new intake for a new concern.",
         ) from exc
     except InvalidIntakeDecisionError as exc:
         raise HTTPException(

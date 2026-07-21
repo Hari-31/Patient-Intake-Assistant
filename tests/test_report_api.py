@@ -8,18 +8,21 @@ from app.main import app
 from app.models.auth import AuthenticatedUser, UserRole
 from app.models.reports import ReportUploadResponse
 from app.routers.reports import get_report_service
-from app.services.conversation_store import SessionNotFoundError
+from app.services.conversation_store import SessionClosedError, SessionNotFoundError
 
 
 class FakeReportService:
     def __init__(self) -> None:
         self.calls = []
         self.reject_session = False
+        self.closed_session = False
 
     async def upload_pdf(self, **kwargs):
         self.calls.append(kwargs)
         if self.reject_session:
             raise SessionNotFoundError(str(kwargs["session_id"]))
+        if self.closed_session:
+            raise SessionClosedError(str(kwargs["session_id"]))
         return ReportUploadResponse(
             report_id=uuid4(),
             session_id=kwargs["session_id"],
@@ -72,6 +75,19 @@ class ReportApiTests(unittest.TestCase):
             files={"file": ("labs.pdf", b"%PDF-test", "application/pdf")},
         )
         self.assertEqual(response.status_code, 404)
+
+    def test_closed_session_rejects_upload(self) -> None:
+        self.service.closed_session = True
+        response = self.client.post(
+            "/upload",
+            data={"session_id": str(uuid4())},
+            files={"file": ("labs.pdf", b"%PDF-test", "application/pdf")},
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(
+            response.json()["detail"],
+            "This intake is closed. Start a new intake for a new concern.",
+        )
 
 
 if __name__ == "__main__":

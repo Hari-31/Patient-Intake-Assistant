@@ -19,6 +19,12 @@ class MemoryStore:
         self.session_id = uuid4()
         return self.session_id
 
+    async def get_or_create_active_session(self, patient_id):
+        return self.session_id, True
+
+    async def close_session(self, patient_id, session_id, status):
+        return None
+
     async def add(self, patient_id, session_id, message):
         self.messages.append(message)
         self.summary = None
@@ -64,13 +70,14 @@ class CapturingLLM:
                         "medications_and_supplements": covered,
                         "known_allergies": covered,
                     },
+                    "report_question_answered": not covered,
                     "transition": (
                         "Your uploaded report lists an HbA1c of 8.2%."
                         if not covered
                         else ""
                     ),
                     "follow_up_question": (
-                        None if covered else "When did the thirst begin?"
+                        None
                     ),
                 }
             )
@@ -105,6 +112,8 @@ class RAGChatTests(unittest.IsolatedAsyncioTestCase):
         summary = await service.summarize(patient_id, session_id)
 
         self.assertIn("HbA1c of 8.2%", response.reply)
+        self.assertNotIn("?", response.reply)
+        self.assertNotIn("When did", response.reply)
         self.assertIn("HbA1c 8.2%", summary.relevant_history)
         self.assertEqual(len(rag.calls), 2)
         context_calls = [

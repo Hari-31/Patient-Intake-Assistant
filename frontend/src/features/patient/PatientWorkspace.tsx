@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   FileText,
@@ -28,7 +28,10 @@ const maxReportBytes = 10 * 1024 * 1024;
 export function PatientWorkspace() {
   const apiClient = useApiClient();
   const auth = useAuth();
-  const [sessionId, setSessionId] = useLocalSessionId(auth.user?.id ?? "anonymous");
+  const queryClient = useQueryClient();
+  const patientId = auth.user?.id ?? "anonymous";
+  const activeSessionQueryKey = ["patient", "active-session", patientId] as const;
+  const [sessionId, setSessionId] = useState("");
   const [messages, setMessages] = useState<IntakeMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [chatError, setChatError] = useState<string | null>(null);
@@ -40,6 +43,29 @@ export function PatientWorkspace() {
   const [isDragging, setIsDragging] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const sendInFlightRef = useRef(false);
+
+  const activeSessionQuery = useQuery({
+    queryKey: activeSessionQueryKey,
+    queryFn: () => apiClient.getActiveSession(),
+    retry: false,
+  });
+
+  useEffect(() => {
+    const activeSession = activeSessionQuery.data;
+    if (!activeSession) {
+      return;
+    }
+    setSessionId(activeSession.session_id);
+    setMessages(
+      activeSession.messages
+        .filter((message) => message.role === "patient" || message.role === "assistant")
+        .map((message, index) => ({
+          id: `${message.created_at}-${index}`,
+          role: message.role as "patient" | "assistant",
+          content: message.content,
+        })),
+    );
+  }, [activeSessionQuery.data]);
 
   const chatMutation = useMutation({
     mutationFn: (message: string) =>
@@ -61,6 +87,11 @@ export function PatientWorkspace() {
       setUploadResult(response);
       setSelectedFile(null);
     },
+  });
+
+  const abandonMutation = useMutation({
+    mutationFn: (activeSessionId: string) =>
+      apiClient.abandonSession(activeSessionId),
   });
 
   const emergencyActive = useMemo(
@@ -96,7 +127,32 @@ export function PatientWorkspace() {
     ]);
 
     try {
+      const hadSession = Boolean(sessionId);
       const response = await chatMutation.mutateAsync(message);
+      if (
+        response.resumed &&
+        !hadSession &&
+        !response.intake_complete &&
+        !response.emergency_triggered
+      ) {
+        const restored = await apiClient.getActiveSession();
+        if (restored) {
+          queryClient.setQueryData(activeSessionQueryKey, restored);
+          setSessionId(restored.session_id);
+          setMessages(
+            restored.messages
+              .filter(
+                (item) => item.role === "patient" || item.role === "assistant",
+              )
+              .map((item, index) => ({
+                id: `${item.created_at}-${index}`,
+                role: item.role as "patient" | "assistant",
+                content: item.content,
+              })),
+          );
+          return;
+        }
+      }
       receiveChatResponse(response);
     } catch (error) {
       setChatError(toUserError(error));
@@ -122,8 +178,18 @@ export function PatientWorkspace() {
     ]);
   }
 
-  function startNewIntake() {
+  async function startNewIntake() {
+    setChatError(null);
+    if (sessionId && !intakeStopped) {
+      try {
+        await abandonMutation.mutateAsync(sessionId);
+      } catch (error) {
+        setChatError(toUserError(error));
+        return;
+      }
+    }
     setSessionId("");
+    queryClient.setQueryData(activeSessionQueryKey, null);
     setMessages([]);
     setDraft("");
     setChatError(null);
@@ -189,13 +255,26 @@ export function PatientWorkspace() {
           <div className="eyebrow">Patient workspace</div>
           <h1 id="patient-workspace-title">Intake conversation</h1>
         </div>
-        <button className="secondary-button" type="button" onClick={startNewIntake} disabled={chatMutation.isPending}>
+        <button className="secondary-button" type="button" onClick={startNewIntake} disabled={chatMutation.isPending || abandonMutation.isPending || activeSessionQuery.isPending}>
           <RefreshCcw aria-hidden="true" size={16} />
-          New intake
+          {abandonMutation.isPending ? "Starting" : "Start new intake"}
         </button>
       </div>
 
       <MedicalDisclaimer />
+
+      {activeSessionQuery.error ? (
+        <Notice tone="danger" title="Could not restore intake">
+          {toUserError(activeSessionQuery.error)}
+        </Notice>
+      ) : null}
+
+      {intakeComplete ? (
+        <Notice tone="success" title="Intake assessment complete">
+          The doctor will see you soon. Please wait for further instructions.
+          You may log out using the sign-out button at the top of the page.
+        </Notice>
+      ) : null}
 
       {emergencyActive ? (
         <Notice tone="danger" title="Emergency response">
@@ -253,12 +332,12 @@ export function PatientWorkspace() {
               }
               rows={3}
               maxLength={10_000}
-              disabled={intakeStopped || chatMutation.isPending}
+              disabled={intakeStopped || chatMutation.isPending || activeSessionQuery.isPending}
             />
             <button
               className="primary-button send-button"
               type="submit"
-              disabled={!draft.trim() || chatMutation.isPending || intakeStopped}
+              disabled={!draft.trim() || chatMutation.isPending || intakeStopped || activeSessionQuery.isPending}
             >
               <Send aria-hidden="true" size={17} />
               {emergencyActive
@@ -294,14 +373,14 @@ export function PatientWorkspace() {
             <div className="panel-header">
               <div>
                 <h2>PDF report</h2>
-                <p>{uploadResult ? `${uploadResult.filename} embedded in ${uploadResult.chunk_count} chunks` : "Attach to the active intake"}</p>
+                <p>{uploadResult ? `${uploadResult.filename} is ready` : "Attach to the active intake"}</p>
               </div>
             </div>
             <div
-              className={`drop-zone ${isDragging ? "dragging" : ""} ${!sessionId ? "disabled" : ""}`}
+              className={`drop-zone ${isDragging ? "dragging" : ""} ${!sessionId || intakeStopped ? "disabled" : ""}`}
               onDragOver={(event) => {
                 event.preventDefault();
-                if (sessionId) {
+                if (sessionId && !intakeStopped) {
                   setIsDragging(true);
                 }
               }}
@@ -309,7 +388,7 @@ export function PatientWorkspace() {
               onDrop={(event) => {
                 event.preventDefault();
                 setIsDragging(false);
-                if (sessionId) {
+                if (sessionId && !intakeStopped) {
                   handleFile(event.dataTransfer.files.item(0));
                 }
               }}
@@ -320,7 +399,7 @@ export function PatientWorkspace() {
                 <input
                   type="file"
                   accept="application/pdf,.pdf"
-                  disabled={!sessionId}
+                  disabled={!sessionId || intakeStopped}
                   onChange={(event) => handleFile(event.target.files?.item(0) ?? null)}
                 />
               </label>
@@ -335,7 +414,7 @@ export function PatientWorkspace() {
                 {uploadResult.filename}
               </Notice>
             ) : null}
-            <button className="primary-button full-width" type="button" disabled={!sessionId || !selectedFile || uploadMutation.isPending} onClick={submitUpload}>
+            <button className="primary-button full-width" type="button" disabled={!sessionId || !selectedFile || uploadMutation.isPending || intakeStopped} onClick={submitUpload}>
               <Upload aria-hidden="true" size={17} />
               {uploadMutation.isPending ? "Uploading" : "Upload report"}
             </button>
@@ -404,22 +483,6 @@ function SummaryList({
 
 function CompactEmpty({ label }: { label: string }) {
   return <div className="compact-empty">{label}</div>;
-}
-
-function useLocalSessionId(patientId: string) {
-  const sessionStorageKey = `patient-intake-active-session:${patientId}`;
-  const [sessionId, setSessionIdState] = useState(() => localStorage.getItem(sessionStorageKey) ?? "");
-
-  function setSessionId(nextSessionId: string) {
-    setSessionIdState(nextSessionId);
-    if (nextSessionId) {
-      localStorage.setItem(sessionStorageKey, nextSessionId);
-    } else {
-      localStorage.removeItem(sessionStorageKey);
-    }
-  }
-
-  return [sessionId, setSessionId] as const;
 }
 
 function toUserError(error: unknown): string {

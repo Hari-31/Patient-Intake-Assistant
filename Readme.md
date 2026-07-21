@@ -1,140 +1,178 @@
 # Patient Intake Assistant
 
-Minimal FastAPI backend for an educational AI patient-intake assistant.
+A chatbot that interviews patients before they see a doctor.
 
-## Local setup (PowerShell)
+Patients describe their symptoms in a chat. The bot asks follow-up questions one at a time — onset, location, severity, history, medications, allergies — until the intake is complete, then produces a structured summary a doctor can read in 30 seconds instead of spending the first ten minutes of the visit asking the same questions. Doctors get a read-only dashboard where each summary can be expanded into the full transcript, so every conclusion can be verified against what the patient actually said.
+
+This is an educational project. It is decision support, not a diagnostic tool, and it says so to every user.
+
+## How it works
+
+```
+Patient chat (React)
+        │  Supabase JWT
+        ▼
+FastAPI ── auth gate (verify token, read role from app_metadata)
+        │
+        ▼
+Orchestrator ── every turn:
+        1. save message
+        2. deterministic red-flag check ── emergency? stop and escalate
+        3. RAG: pull relevant chunks from uploaded reports (pgvector)
+        4. LLM decides: ask next question, or intake complete
+        │
+        ▼
+Structured summary (JSON) ──► Doctor dashboard (read-only)
+```
+
+A few design decisions worth knowing:
+
+- **The server decides when intake ends, not the model.** The LLM returns per-topic coverage booleans; the intake only closes when all nine topics are answered, declined, or unknown.
+- **Red flags are rule-based, not LLM-based.** A deterministic checker (with negation handling, so "no chest pain" doesn't trigger) runs before the model on every message. The `red_flags` field in the summary is overwritten with these detected flags — the safety-critical output never depends on model judgement.
+- **Report text is treated as data, never as instructions**, which closes off prompt injection through uploaded PDFs.
+- **Isolation is enforced twice**: application queries scope by patient/doctor id, and Row Level Security policies back them up at the database.
+
+## Stack
+
+| | |
+|---|---|
+| Backend | FastAPI (Python) |
+| Frontend | React + Vite + TypeScript |
+| Auth | Supabase Auth (JWT, roles in `app_metadata`) |
+| Database | Supabase Postgres + pgvector |
+| Files | Supabase Storage (private bucket) |
+| LLM | OpenAI (`OPENAI_MODEL`, default `gpt-5.6-terra`) |
+| Embeddings | `text-embedding-3-small`, 1536 dims |
+
+## Running it locally
+
+Backend (PowerShell):
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+pip install -r requirements.txt
+copy .env.example .env        # then fill in the values
+python scripts/apply_migrations.py
 uvicorn app.main:app --reload
 ```
 
-The API is available at `http://127.0.0.1:8000`. Check it with:
+Frontend:
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8000/health
+cd frontend
+npm install
+copy .env.example .env.local  # then fill in the values
+npm run dev
 ```
 
-Copy `.env.example` to `.env` for local secrets. `.env` is ignored by Git;
-deployment environments should inject the same values as environment variables.
+API docs live at `http://127.0.0.1:8000/docs`.
 
-For OpenAI-backed chat, set `OPENAI_API_KEY`. The default model is
-`gpt-5.6-terra`; override it with `OPENAI_MODEL` if needed.
+### Environment variables
 
-## Supabase Auth
-
-Enable the desired login provider in **Supabase Dashboard → Authentication →
-Providers**. Configure the backend with:
+Backend `.env`:
 
 ```env
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_JWT_SECRET=
-SUPABASE_SERVICE_ROLE_KEY=
+OPENAI_API_KEY=            # chat + embeddings
+DATABASE_URL=              # Supabase Postgres connection string
+SUPABASE_URL=              # https://<project>.supabase.co
+SUPABASE_JWT_SECRET=       # for HS256 token verification
+SUPABASE_SERVICE_ROLE_KEY= # backend only. Never ship this to a client.
 ```
 
-The JWT secret and service-role key are backend-only secrets and must never be
-included in frontend code. `POST /auth/signup` creates patient accounts through
-the Supabase admin API and writes `patient` to `app_metadata.role`; callers
-cannot choose a role. The patient's name is copied into `profiles` by a database
-trigger. After signup, log in through Supabase Auth and send its access token to
-the protected endpoints:
+Frontend `frontend/.env.local` uses only the **anon** key — the service-role key must never appear anywhere in frontend code:
 
-```http
-Authorization: Bearer <supabase-access-token>
+```env
+VITE_API_BASE_URL=http://127.0.0.1:8000
+VITE_SUPABASE_URL=
+VITE_SUPABASE_ANON_KEY=
 ```
-
-The API verifies the signature, issuer, audience, and expiration using either
-the configured HS256 secret or Supabase's JWKS endpoint for current asymmetric
-tokens. It then reads the application role only from `app_metadata.role` and
-never authorizes from user-editable `user_metadata`.
 
 ## API
 
-- `GET /health` checks API availability.
-- `POST /auth/signup` accepts `{"email": "...", "password": "...", "name":
-  "..."}` and creates a patient account server-side.
-- `POST /chat` requires a patient bearer token, accepts `{"message": "..."}`
-  for the first turn, and returns an owned server-generated UUID. Send that UUID
-  as `session_id` on subsequent turns. The response includes
-  `intake_complete`; it remains false until onset/duration, location, quality,
-  0-10 severity, modifying factors, associated symptoms, relevant history and
-  prior episodes, medications and supplements, and allergies are all answered,
-  declined, or marked unknown.
-- `POST /summary` accepts `{"session_id": "<uuid>"}` and returns the fixed
-  medical intake summary shape. `red_flags` contains only alarming findings the
-  patient actually reported; `warning_signs_to_watch` contains future symptoms
-  that should prompt urgent care if they develop. It requires the owning
-  patient's bearer token.
-  Incomplete non-emergency intakes return `409`; deterministic red-flag
-  escalations may be summarized immediately.
-- `POST /upload` requires a patient bearer token and multipart form fields
-  `session_id` plus a PDF `file`. The session must belong to that patient. The
-  response includes the report UUID and number of embedded chunks.
-- `GET /doctor/patients` requires a doctor bearer token and lists only patients
-  assigned to that doctor.
-- `GET /doctor/summaries` returns summaries for assigned patients. Pass an
-  optional `patient_id` query parameter to filter the result.
-- `GET /doctor/sessions/{session_id}` returns an assigned patient's ordered
-  transcript and its current summary for side-by-side verification.
+| Endpoint | Auth | What it does |
+|---|---|---|
+| `GET /health` | — | liveness check |
+| `POST /auth/signup` | — | creates a patient account server-side; role is set by the server, never the caller |
+| `POST /chat` | patient | send a message; without `session_id`, resumes the patient's active intake or creates one. Response includes `resumed` and `intake_complete`; closed sessions return `409` |
+| `POST /summary` | patient | structured summary for a finished intake (`409` if incomplete, unless a red-flag escalation ended it) |
+| `POST /upload` | patient | attach a text-based PDF report (≤10 MB) to an owned active session; it gets chunked and embedded for retrieval |
+| `GET /sessions/active` | patient | return the patient's active intake and ordered messages, or `404` when none exists |
+| `POST /sessions/{id}/abandon` | patient | permanently abandon an owned active intake so a new concern can be started |
+| `GET /doctor/patients` | doctor | patients assigned to this doctor |
+| `GET /doctor/summaries` | doctor | their summaries, optionally filtered by `patient_id` |
+| `GET /doctor/sessions/{id}` | doctor | full ordered transcript + summary, for verification |
 
-Doctor access is read-only. Create assignments manually with a trusted SQL or
-admin workflow; never expose this operation to a patient client:
+Doctor access is strictly read-only. Assignments are created manually (there is deliberately no API for it):
 
 ```sql
 insert into public.patient_doctor (patient_id, doctor_id)
-values ('<patient-auth-user-uuid>', '<doctor-auth-user-uuid>');
+values ('<patient-uuid>', '<doctor-uuid>');
 ```
 
-## Supabase Postgres persistence
-
-Create a Supabase project, open its **Connect** panel, and copy the direct or
-session-pooler Postgres connection string into `.env`:
-
-```env
-DATABASE_URL=postgresql://...
-```
-
-For a persistent FastAPI server, use the direct connection when IPv6 is
-available; otherwise use the session pooler on port 5432. Apply the schema:
+For local/admin testing, PowerShell helpers can create a doctor, copy their
+bearer token, and assign existing patients by email:
 
 ```powershell
-python scripts/apply_migrations.py
+# This changes policy only for the current PowerShell process.
+Set-ExecutionPolicy -Scope Process Bypass
+
+# Edit the marked values at the top of each script, then run them.
+# The doctor-token script prompts securely for the password.
+.\scripts\get_doctor_token.ps1
+
+# Assign the patient emails listed inside the assignment script.
+.\scripts\assign_patients_to_doctor.ps1
 ```
 
-The `sessions`, `messages`, `summaries`, and `audit_log` tables can then be
-inspected from Supabase's Table Editor. Messages and summaries persist across
-API restarts. A new message invalidates the previously generated summary so the
-next `/summary` call reflects the latest transcript.
+Set `$ShowToken = $true` inside the first script only when the token must also
+be printed.
+These trusted admin scripts read `SUPABASE_SERVICE_ROLE_KEY` from `.env`; never
+ship the scripts or that key to a browser/client environment.
 
-The Phase 3 migration creates `profiles`, reserves `doctor_id` for Phase 5,
-rejects new sessions without an owner, and adds patient-only RLS policies using
-`auth.jwt() -> 'app_metadata' ->> 'role'`. Legacy NULL-owner sessions remain
-inaccessible. Once they have been deliberately assigned or removed, make the
-column fully non-nullable:
+## The summary shape
 
-```sql
-alter table public.sessions validate constraint sessions_patient_id_required;
-alter table public.sessions alter column patient_id set not null;
-alter table public.sessions drop constraint sessions_patient_id_required;
+```json
+{
+  "chief_complaint": "...",
+  "symptom_timeline": "...",
+  "relevant_history": "...",
+  "red_flags": [],
+  "warning_signs_to_watch": [],
+  "possible_directions": [],
+  "suggested_questions_for_doctor": []
+}
 ```
 
-The Phase 5 migration creates `patient_doctor` as the authoritative assignment
-table and adds doctor-only SELECT policies for assigned profiles, sessions,
-messages, and summaries. It grants no doctor write operations. The FastAPI
-reader also joins every query through `patient_doctor` because the backend
-database connection is privileged and bypasses RLS.
+`red_flags` = alarming findings the patient actually reported (rule-detected, often empty — that's good news).
+`warning_signs_to_watch` = symptoms that would warrant urgent care if they appear later. The two are never mixed.
 
-## Patient report RAG
+## Project layout
 
-Phase 4 creates a private `medical-reports` Storage bucket plus patient-owned
-`reports` and `report_chunks` tables. PDF text is split into overlapping chunks,
-embedded with `OPENAI_EMBEDDING_MODEL` (default `text-embedding-3-small`), and
-stored in pgvector. Chat and summary retrieval always filters by both patient
-and session before ranking chunks with cosine distance. Sessions without a
-report skip the embedding call and retain the original chat behavior.
+```
+app/
+  routers/        thin endpoints (chats, reports, doctors, auth, health)
+  services/       the actual logic: chat orchestration, LLM client,
+                  RAG, safety rules, doctor reader, conversation store
+  dependencies/   auth gate (JWT verification, role checks)
+  models/         pydantic shapes
+frontend/         React app (patient chat + doctor dashboard)
+supabase/
+  migrations/     schema, RLS policies, pgvector setup
+tests/            backend tests
+```
 
-Upload from Swagger by authorizing with a patient token, opening `POST /upload`,
-entering an owned session UUID, and selecting a text-based PDF. Scanned PDFs are
-rejected until OCR support is added. The initial file limit is 10 MB.
+## Testing
+
+```powershell
+pytest
+```
+
+Frontend tests run with `npm test` from `frontend/`.
+
+## Limitations
+
+- Educational use only — no real patient data, and not a medical device.
+- Scanned/image PDFs are rejected (no OCR yet).
+- Doctor-patient assignment is manual by design.
+- English only for the red-flag rules.

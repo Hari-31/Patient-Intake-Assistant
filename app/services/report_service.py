@@ -12,7 +12,7 @@ from psycopg.types.json import Jsonb
 from pypdf import PdfReader
 
 from app.models.reports import ReportUploadResponse
-from app.services.conversation_store import SessionNotFoundError
+from app.services.conversation_store import SessionClosedError, SessionNotFoundError
 from app.services.rag_service import EmbeddedChunk, RAGService, get_rag_service
 
 
@@ -106,13 +106,15 @@ class ReportService:
             with self._connection() as connection:
                 row = connection.execute(
                     """
-                    select 1 from public.sessions
+                    select status from public.sessions
                     where id = %s and patient_id = %s
                     """,
                     (session_id, patient_id),
                 ).fetchone()
                 if row is None:
                     raise SessionNotFoundError(str(session_id))
+                if row[0] != "active":
+                    raise SessionClosedError(str(session_id))
         except psycopg.Error as exc:
             raise ReportServiceError("Could not verify report ownership.") from exc
 
@@ -134,7 +136,7 @@ class ReportService:
                             (id, patient_id, session_id, filename, storage_path)
                         select %s, patient_id, id, %s, %s
                         from public.sessions
-                        where id = %s and patient_id = %s
+                        where id = %s and patient_id = %s and status = 'active'
                         returning id
                         """,
                         (
@@ -146,7 +148,16 @@ class ReportService:
                         ),
                     ).fetchone()
                     if report is None:
-                        raise SessionNotFoundError(str(session_id))
+                        status_row = cursor.execute(
+                            """
+                            select status from public.sessions
+                            where id = %s and patient_id = %s
+                            """,
+                            (session_id, patient_id),
+                        ).fetchone()
+                        if status_row is None:
+                            raise SessionNotFoundError(str(session_id))
+                        raise SessionClosedError(str(session_id))
 
                     cursor.executemany(
                         """

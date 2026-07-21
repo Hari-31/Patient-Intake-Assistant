@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from app.dependencies.auth import require_patient
 from app.models.auth import AuthenticatedUser
 from app.models.reports import ReportUploadResponse
-from app.services.conversation_store import SessionNotFoundError
+from app.services.conversation_store import SessionClosedError, SessionNotFoundError
 from app.services.rag_service import (
     RAGConfigurationError,
     RAGProviderError,
@@ -52,6 +52,11 @@ async def upload_report(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No conversation exists for that session id.",
+        ) from exc
+    except SessionClosedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This intake is closed. Start a new intake for a new concern.",
         ) from exc
     except ReportValidationError as exc:
         raise HTTPException(
