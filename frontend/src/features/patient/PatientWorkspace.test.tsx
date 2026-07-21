@@ -106,6 +106,31 @@ describe("PatientWorkspace safety", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
   });
 
+  it("keeps the composer focused after sending with Enter", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          session_id: "session-1",
+          reply: "When did it begin?",
+          emergency_triggered: false,
+          intake_complete: false,
+          resumed: false,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    renderWorkspace(fetchMock);
+    const textarea = screen.getByRole("textbox");
+    await waitFor(() => expect(textarea).toBeEnabled());
+    textarea.focus();
+    fireEvent.change(textarea, { target: { value: "My head hurts" } });
+    fireEvent.keyDown(textarea, { key: "Enter", code: "Enter", charCode: 13 });
+
+    expect(await screen.findByText("When did it begin?")).toBeInTheDocument();
+    expect(textarea).toHaveValue("");
+    await waitFor(() => expect(textarea).toHaveFocus());
+  });
+
   it("stops the intake after an emergency escalation", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(

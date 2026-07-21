@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -9,6 +9,7 @@ import {
   Upload,
 } from "lucide-react";
 import { ApiError } from "../../lib/api-client";
+import { formatTime } from "../../lib/format";
 import type { ChatResponse, MedicalSummary, ReportUploadResponse, SessionStatus } from "../../lib/types";
 import { useApiClient } from "../../app/api-context";
 import { Notice } from "../../components/feedback/Notice";
@@ -19,6 +20,7 @@ type IntakeMessage = {
   id: string;
   role: "patient" | "assistant";
   content: string;
+  createdAt?: string;
   emergency?: boolean;
 };
 
@@ -44,6 +46,8 @@ export function PatientWorkspace() {
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const draftTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const sendInFlightRef = useRef(false);
+  const shouldRefocusComposerRef = useRef(false);
+  const [composerFocusRequest, setComposerFocusRequest] = useState(0);
 
   const activeSessionQuery = useQuery({
     queryKey: activeSessionQueryKey,
@@ -73,6 +77,7 @@ export function PatientWorkspace() {
           id: `${message.created_at}-${index}`,
           role: message.role as "patient" | "assistant",
           content: message.content,
+          createdAt: message.created_at,
         })),
     );
   }, [activeSessionQuery.data, activeSessionQuery.isPending]);
@@ -133,6 +138,29 @@ export function PatientWorkspace() {
     textarea.style.overflowY = textarea.scrollHeight > height ? "auto" : "hidden";
   }, [draft]);
 
+  useEffect(() => {
+    if (!shouldRefocusComposerRef.current) {
+      return;
+    }
+    if (chatMutation.isPending || activeSessionQuery.isPending) {
+      return;
+    }
+    if (intakeStopped) {
+      shouldRefocusComposerRef.current = false;
+      return;
+    }
+
+    const textarea = draftTextareaRef.current;
+    if (!textarea || textarea.disabled) {
+      return;
+    }
+
+    textarea.focus({ preventScroll: true });
+    const cursorPosition = textarea.value.length;
+    textarea.setSelectionRange(cursorPosition, cursorPosition);
+    shouldRefocusComposerRef.current = false;
+  }, [activeSessionQuery.isPending, chatMutation.isPending, composerFocusRequest, draft, intakeStopped]);
+
   async function handleSend(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const message = draft.trim();
@@ -149,6 +177,7 @@ export function PatientWorkspace() {
       id: crypto.randomUUID(),
       role: "patient",
       content: message,
+      createdAt: new Date().toISOString(),
     };
     sendInFlightRef.current = true;
     setDraft("");
@@ -174,11 +203,12 @@ export function PatientWorkspace() {
               .filter(
                 (item) => item.role === "patient" || item.role === "assistant",
               )
-              .map((item, index) => ({
-                id: `${item.created_at}-${index}`,
-                role: item.role as "patient" | "assistant",
-                content: item.content,
-              })),
+                .map((item, index) => ({
+                  id: `${item.created_at}-${index}`,
+                  role: item.role as "patient" | "assistant",
+                  content: item.content,
+                  createdAt: item.created_at,
+                })),
           );
           return;
         }
@@ -198,7 +228,29 @@ export function PatientWorkspace() {
       }
     } finally {
       sendInFlightRef.current = false;
+      requestComposerFocus();
     }
+  }
+
+  function requestComposerFocus() {
+    shouldRefocusComposerRef.current = true;
+    setComposerFocusRequest((request) => request + 1);
+  }
+
+  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (
+      event.key !== "Enter" ||
+      event.shiftKey ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.nativeEvent.isComposing
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    event.currentTarget.form?.requestSubmit();
   }
 
   function receiveChatResponse(response: ChatResponse) {
@@ -217,6 +269,7 @@ export function PatientWorkspace() {
         id: crypto.randomUUID(),
         role: "assistant",
         content: response.reply,
+        createdAt: new Date().toISOString(),
         emergency: response.emergency_triggered,
       },
     ]);
@@ -322,14 +375,24 @@ export function PatientWorkspace() {
   }
 
   return (
-    <section className="workspace patient-workspace" aria-labelledby="patient-workspace-title">
+    <section
+      className="workspace patient-workspace"
+      aria-labelledby="patient-workspace-title"
+    >
       <div className="workspace-heading">
         <div>
           <div className="eyebrow">Patient workspace</div>
           <h1 id="patient-workspace-title">Current request</h1>
         </div>
-        <div className="request-status-pill" data-status={activeSessionStatus ?? "new"}>
-          {statusLabel(activeSessionStatus, Boolean(sessionId), requestSubmitted)}
+        <div
+          className="request-status-pill"
+          data-status={activeSessionStatus ?? "new"}
+        >
+          {statusLabel(
+            activeSessionStatus,
+            Boolean(sessionId),
+            requestSubmitted,
+          )}
         </div>
       </div>
 
@@ -348,7 +411,11 @@ export function PatientWorkspace() {
               This intake is closed. Start a new intake if something changes or
               you have a new concern.
             </span>
-            <button className="secondary-button" type="button" onClick={startNewIntake}>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={startNewIntake}
+            >
               <MessageSquarePlus aria-hidden="true" size={16} />
               Start new intake
             </button>
@@ -358,7 +425,8 @@ export function PatientWorkspace() {
 
       {emergencyActive ? (
         <Notice tone="danger" title="Emergency response">
-          The assistant flagged urgent symptoms in this intake. Follow the backend response and seek emergency care when directed.
+          The assistant flagged urgent symptoms in this intake. Follow the
+          backend response and seek emergency care when directed.
         </Notice>
       ) : null}
 
@@ -384,9 +452,32 @@ export function PatientWorkspace() {
               </div>
             ) : (
               messages.map((message) => (
-                <article key={message.id} className={`message-bubble ${message.role} ${message.emergency ? "emergency" : ""}`}>
-                  {message.emergency ? <AlertTriangle aria-hidden="true" size={16} /> : null}
-                  <p>{message.content}</p>
+                <article
+                  key={message.id}
+                  className={`message-bubble ${message.role} ${message.emergency ? "emergency" : ""}`}
+                >
+                  <header className="message-meta">
+                    <span>
+                      {message.role === "patient" ? "You" : "Assistant"}
+                    </span>
+                    {message.createdAt ? (
+                      <time dateTime={message.createdAt}>
+                        {formatTime(message.createdAt)}
+                      </time>
+                    ) : null}
+                  </header>
+                  <div
+                    className={
+                      message.emergency
+                        ? "message-content with-alert"
+                        : "message-content"
+                    }
+                  >
+                    {message.emergency ? (
+                      <AlertTriangle aria-hidden="true" size={16} />
+                    ) : null}
+                    <p>{message.content}</p>
+                  </div>
                 </article>
               ))
             )}
@@ -411,6 +502,7 @@ export function PatientWorkspace() {
               className="chat-textarea"
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={handleComposerKeyDown}
               placeholder={
                 emergencyActive
                   ? "This intake stopped after an emergency escalation"
@@ -420,12 +512,21 @@ export function PatientWorkspace() {
               }
               rows={1}
               maxLength={10_000}
-              disabled={intakeStopped || chatMutation.isPending || activeSessionQuery.isPending}
+              disabled={
+                intakeStopped ||
+                chatMutation.isPending ||
+                activeSessionQuery.isPending
+              }
             />
             <button
               className="primary-button send-button"
               type="submit"
-              disabled={!draft.trim() || chatMutation.isPending || intakeStopped || activeSessionQuery.isPending}
+              disabled={
+                !draft.trim() ||
+                chatMutation.isPending ||
+                intakeStopped ||
+                activeSessionQuery.isPending
+              }
             >
               <Send aria-hidden="true" size={17} />
               {emergencyActive
@@ -438,30 +539,49 @@ export function PatientWorkspace() {
         </section>
 
         <aside className="side-stack" aria-label="Intake tools">
-          {canSummarize ? <section className="panel">
-            <div className="panel-header">
-              <div>
-                <h2>Medical summary</h2>
-                <p>{summary ? "Generated from current transcript" : "Ready after the request is sent"}</p>
+          {canSummarize ? (
+            <section className="panel">
+              <div className="panel-header">
+                <div>
+                  <h2>Medical summary</h2>
+                  <p>
+                    {summary
+                      ? "Generated from current transcript"
+                      : "Ready after the request is sent"}
+                  </p>
+                </div>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={summaryMutation.isPending}
+                  onClick={requestSummary}
+                >
+                  <FileText aria-hidden="true" size={16} />
+                  {summaryMutation.isPending ? "Generating" : "Generate"}
+                </button>
               </div>
-              <button className="secondary-button" type="button" disabled={summaryMutation.isPending} onClick={requestSummary}>
-                <FileText aria-hidden="true" size={16} />
-                {summaryMutation.isPending ? "Generating" : "Generate"}
-              </button>
-            </div>
-            {summaryMutation.error instanceof Error ? (
-              <Notice tone="danger" title="Summary failed">
-                {summaryMutation.error.message}
-              </Notice>
-            ) : null}
-            {summary ? <SummaryView summary={summary} /> : <CompactEmpty label="No summary generated." />}
-          </section> : null}
+              {summaryMutation.error instanceof Error ? (
+                <Notice tone="danger" title="Summary failed">
+                  {summaryMutation.error.message}
+                </Notice>
+              ) : null}
+              {summary ? (
+                <SummaryView summary={summary} />
+              ) : (
+                <CompactEmpty label="No summary generated." />
+              )}
+            </section>
+          ) : null}
 
           <section className="panel">
             <div className="panel-header">
               <div>
                 <h2>PDF report</h2>
-                <p>{uploadResult ? `${uploadResult.filename} is ready` : "Attach to the current request"}</p>
+                <p>
+                  {uploadResult
+                    ? `${uploadResult.filename} is ready`
+                    : "Attach to the current request"}
+                </p>
               </div>
             </div>
             <div
@@ -482,13 +602,18 @@ export function PatientWorkspace() {
               }}
             >
               <Upload aria-hidden="true" size={22} />
-              <label>
-                <span>{selectedFile ? selectedFile.name : "Select PDF"}</span>
+              <label className="file-picker" aria-disabled={uploadDisabled}>
+                <span className="file-picker-text">
+                  {selectedFile ? selectedFile.name : "Choose PDF report"}
+                </span>
+                <span className="file-picker-button">Browse</span>
                 <input
                   type="file"
                   accept="application/pdf,.pdf"
                   disabled={uploadDisabled}
-                  onChange={(event) => handleFile(event.target.files?.item(0) ?? null)}
+                  onChange={(event) =>
+                    handleFile(event.target.files?.item(0) ?? null)
+                  }
                 />
               </label>
             </div>
@@ -499,10 +624,22 @@ export function PatientWorkspace() {
             ) : null}
             {uploadResult ? (
               <Notice tone="success" title="Report uploaded">
-                Converted to compact markdown for AI retrieval. {uploadResult.chunk_count} chunks, {uploadResult.markdown_char_count.toLocaleString()} characters.
+                Converted to compact markdown for AI retrieval.{" "}
+                {uploadResult.chunk_count} chunks,{" "}
+                {uploadResult.markdown_char_count.toLocaleString()} characters.
               </Notice>
             ) : null}
-            <button className="primary-button full-width" type="button" disabled={!sessionId || !selectedFile || uploadMutation.isPending || uploadDisabled} onClick={submitUpload}>
+            <button
+              className="primary-button full-width h-[4px]"
+              type="button"
+              disabled={
+                !sessionId ||
+                !selectedFile ||
+                uploadMutation.isPending ||
+                uploadDisabled
+              }
+              onClick={submitUpload}
+            >
               <Upload aria-hidden="true" size={17} />
               {uploadMutation.isPending ? "Uploading" : "Upload report"}
             </button>
