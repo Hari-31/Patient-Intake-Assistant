@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ChatRequest(BaseModel):
@@ -106,3 +106,18 @@ class MedicalSummary(BaseModel):
         )
     )
     suggested_questions_for_doctor: list[str] = Field(description="Helpful questions the patient should ask their healthcare provider.")
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def normalize_accidental_language_leaks(cls, value):
+        """Normalize known non-English model leakage in cached and new summaries."""
+        if isinstance(value, str):
+            return value.replace("დაახლოებით", "approximately")
+        if isinstance(value, list):
+            return [
+                item.replace("დაახლოებით", "approximately")
+                if isinstance(item, str)
+                else item
+                for item in value
+            ]
+        return value

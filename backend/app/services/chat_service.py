@@ -42,6 +42,8 @@ Never hide urgent risk. Deterministic safety rules run before you, and the final
 
 SUMMARY_SYSTEM_PROMPT = """You create a structured medical intake summary for clinician review from the supplied transcript. This is decision support, not a diagnosis. Do not invent facts. Clearly represent missing or uncertain information.
 
+Write every summary field in clear English only. Translate non-English words from the conversation or report into English while preserving proper names, medication names, measurements, and quoted identifiers exactly when necessary. Never mix another language into an English sentence.
+
 Keep these fields strictly separate:
 - red_flags: ONLY alarming findings the patient affirmatively reported in this conversation. Never include denied, absent, hypothetical, or future symptoms. Return [] when no red flags were reported.
 - warning_signs_to_watch: symptoms or changes that would warrant urgent care IF they appear later. These are anticipatory warnings, not current patient findings.

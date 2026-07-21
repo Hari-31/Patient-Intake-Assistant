@@ -363,7 +363,7 @@ class ChatApiTests(unittest.TestCase):
         self.assertEqual(self.llm.summary_calls, 1)
 
     def test_prompt_requires_all_topics_and_rejects_unrelated_questions(self) -> None:
-        from app.services.chat_service import INTAKE_SYSTEM_PROMPT
+        from app.services.chat_service import INTAKE_SYSTEM_PROMPT, SUMMARY_SYSTEM_PROMPT
 
         required_phrases = [
             "onset AND duration",
@@ -389,6 +389,30 @@ class ChatApiTests(unittest.TestCase):
         ]
         for phrase in required_phrases:
             self.assertIn(phrase, INTAKE_SYSTEM_PROMPT)
+        self.assertIn("clear English only", SUMMARY_SYSTEM_PROMPT)
+        self.assertIn("Never mix another language", SUMMARY_SYSTEM_PROMPT)
+
+    def test_summary_normalizes_accidental_georgian_word(self) -> None:
+        summary = MedicalSummary(
+            chief_complaint="Headache",
+            symptom_timeline="Symptoms started დაახლოებით two days ago.",
+            relevant_history="None reported.",
+            red_flags=[],
+            warning_signs_to_watch=[],
+            possible_directions=[],
+            suggested_questions_for_doctor=[
+                "Did this begin დაახლოებით two days ago?"
+            ],
+        )
+
+        self.assertEqual(
+            summary.symptom_timeline,
+            "Symptoms started approximately two days ago.",
+        )
+        self.assertEqual(
+            summary.suggested_questions_for_doctor,
+            ["Did this begin approximately two days ago?"],
+        )
 
     def test_patient_cannot_access_another_patients_session(self) -> None:
         session_id = uuid4()
