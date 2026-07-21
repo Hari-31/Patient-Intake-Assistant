@@ -21,6 +21,7 @@ class ChatResponse(BaseModel):
 
 class SessionStatus(str, Enum):
     active = "active"
+    submitted = "submitted"
     completed = "completed"
     escalated = "escalated"
     abandoned = "abandoned"

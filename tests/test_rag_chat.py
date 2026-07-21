@@ -13,6 +13,7 @@ class MemoryStore:
         self.session_id = session_id
         self.messages = []
         self.summary = None
+        self.status = "active"
 
     async def create_session(self, patient_id):
         self.patient_id = patient_id
@@ -22,12 +23,22 @@ class MemoryStore:
     async def get_or_create_active_session(self, patient_id):
         return self.session_id, True
 
+    async def get_session_status(self, patient_id, session_id):
+        return self.status
+
+    async def submit_session(self, patient_id, session_id):
+        self.status = "submitted"
+
     async def close_session(self, patient_id, session_id, status):
-        return None
+        self.status = status
 
     async def add(self, patient_id, session_id, message):
         self.messages.append(message)
         self.summary = None
+
+    async def add_and_close(self, patient_id, session_id, message, status):
+        await self.add(patient_id, session_id, message)
+        await self.close_session(patient_id, session_id, status)
 
     async def get(self, patient_id, session_id):
         return list(self.messages)

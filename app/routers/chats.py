@@ -13,6 +13,7 @@ from app.services.chat_service import (
     InvalidSummaryError,
 )
 from app.services.conversation_store import (
+    ConversationStoreConfigurationError,
     ConversationStoreError,
     SessionClosedError,
     SessionNotFoundError,
@@ -44,10 +45,17 @@ def get_chat_service() -> ChatService:
 
 
 def service_unavailable(exc: Exception) -> HTTPException:
-    if isinstance(exc, LLMConfigurationError):
+    if isinstance(
+        exc,
+        (
+            ConversationStoreConfigurationError,
+            LLMConfigurationError,
+            RAGConfigurationError,
+        ),
+    ):
         detail = str(exc)
     else:
-        detail = "The language model service is temporarily unavailable."
+        detail = "A required backend service is temporarily unavailable."
     return HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail=detail,

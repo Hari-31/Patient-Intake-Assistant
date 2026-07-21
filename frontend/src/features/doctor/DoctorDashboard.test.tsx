@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiProvider } from "../../app/api-context";
 import { ApiClient } from "../../lib/api-client";
@@ -36,6 +36,7 @@ function renderDashboard() {
           session_id: "session-1",
           patient_id: "patient-1",
           patient_name: "Pat One",
+          status: "submitted",
           summary,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -45,6 +46,7 @@ function renderDashboard() {
           session_id: "session-1",
           patient_id: "patient-1",
           patient_name: "Pat One",
+          status: "submitted",
           created_at: new Date().toISOString(),
           messages: [{ role: "patient", content: "It began suddenly.", created_at: new Date().toISOString() }],
           summary,
@@ -77,15 +79,24 @@ function renderDashboard() {
 
 
 describe("DoctorDashboard", () => {
-  it("shows a read-only transcript and every summary field", async () => {
+  it("shows a transcript, completion action, and every summary field", async () => {
     renderDashboard();
 
     expect(await screen.findByText("It began suddenly.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Records" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Summaries" })).not.toBeInTheDocument();
     expect(screen.getByText("Urgent clinical assessment")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mark completed" })).toBeInTheDocument();
     expect(screen.getByText("Worst-ever sudden headache").closest("section")).toHaveClass(
       "reported-red-flags",
     );
     expect(screen.getByText("Educational intake tool")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /edit|delete/i })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Minimize transcript" }));
+    expect(screen.queryByText("It began suddenly.")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Expand transcript" }));
+    expect(screen.getByText("It began suddenly.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Minimize transcript" })).toBeInTheDocument();
   });
 });

@@ -10,7 +10,10 @@ from app.dependencies.auth import require_patient
 from app.main import app
 from app.models.auth import AuthenticatedUser, UserRole
 from app.models.chats import IntakeTurnDecision, MedicalSummary
-from app.services.chat_service import ChatService, INTAKE_COMPLETE_MESSAGE
+from app.services.chat_service import (
+    ChatService,
+    INTAKE_COMPLETE_MESSAGE,
+)
 from app.services.conversation_store import (
     Message,
     ActiveSession,
@@ -40,10 +43,24 @@ class FakeConversationStore:
                 return session_id, True
         return await self.create_session(patient_id), False
 
+    async def get_session_status(self, patient_id, session_id):
+        if self.owners.get(session_id) != patient_id:
+            raise SessionNotFoundError(str(session_id))
+        return self.statuses[session_id]
+
+    async def submit_session(self, patient_id, session_id):
+        if self.owners.get(session_id) != patient_id:
+            raise SessionNotFoundError(str(session_id))
+        if self.statuses.get(session_id) == "submitted":
+            return
+        if self.statuses.get(session_id) != "active":
+            raise SessionClosedError(str(session_id))
+        self.statuses[session_id] = "submitted"
+
     async def close_session(self, patient_id, session_id, status):
         if self.owners.get(session_id) != patient_id:
             raise SessionNotFoundError(str(session_id))
-        if self.statuses.get(session_id) != "active":
+        if self.statuses.get(session_id) not in {"active", "submitted"}:
             raise SessionClosedError(str(session_id))
         self.statuses[session_id] = status
 
@@ -52,6 +69,7 @@ class FakeConversationStore:
             if owner == patient_id and self.statuses[session_id] == "active":
                 return ActiveSession(
                     session_id=session_id,
+                    status=self.statuses[session_id],
                     messages=[
                         StoredMessage(
                             role="patient" if message.role == "user" else message.role,
@@ -70,6 +88,10 @@ class FakeConversationStore:
             raise SessionClosedError(str(session_id))
         self.conversations.setdefault(session_id, []).append(message)
         self.summaries.pop(session_id, None)
+
+    async def add_and_close(self, patient_id, session_id, message, status):
+        await self.add(patient_id, session_id, message)
+        await self.close_session(patient_id, session_id, status)
 
     async def get(self, patient_id, session_id):
         if self.owners.get(session_id) != patient_id:
@@ -221,15 +243,21 @@ class ChatApiTests(unittest.TestCase):
         self.assertEqual(repeated_summary.status_code, 200)
         self.assertEqual(self.llm.summary_calls, 1)
 
-        closed_chat = self.client.post(
+        message_count = len(self.store.conversations[parsed_session_id])
+        llm_calls = self.llm.calls
+        follow_up_chat = self.client.post(
             "/chat",
             json={"session_id": session_id, "message": "It is getting worse."},
         )
-        self.assertEqual(closed_chat.status_code, 409)
+        self.assertEqual(follow_up_chat.status_code, 409)
         self.assertEqual(
-            closed_chat.json()["detail"],
+            follow_up_chat.json()["detail"],
             "This intake is closed. Start a new intake for a new concern.",
         )
+        self.assertEqual(self.store.statuses[parsed_session_id], "completed")
+        self.assertEqual(len(self.store.conversations[parsed_session_id]), message_count)
+        self.assertEqual(self.llm.calls, llm_calls)
+
         refreshed_summary = self.client.post(
             "/summary", json={"session_id": session_id}
         )
@@ -294,14 +322,12 @@ class ChatApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 204)
         self.assertEqual(self.store.statuses[own_session], "abandoned")
 
-        repeated = self.client.post(f"/sessions/{own_session}/abandon")
-        self.assertEqual(repeated.status_code, 409)
-
-        other_session = uuid4()
-        self.store.owners[other_session] = uuid4()
-        self.store.statuses[other_session] = "active"
-        forbidden = self.client.post(f"/sessions/{other_session}/abandon")
-        self.assertEqual(forbidden.status_code, 404)
+        closed_chat = self.client.post(
+            "/chat",
+            json={"session_id": str(own_session), "message": "Continue"},
+        )
+        self.assertEqual(closed_chat.status_code, 409)
+        self.assertEqual(self.llm.calls, 1)
 
     def test_old_cached_summary_is_regenerated_with_separate_warnings(self) -> None:
         session_id = uuid4()

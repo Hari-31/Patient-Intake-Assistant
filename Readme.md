@@ -2,7 +2,7 @@
 
 A chatbot that interviews patients before they see a doctor.
 
-Patients describe their symptoms in a chat. The bot asks follow-up questions one at a time — onset, location, severity, history, medications, allergies — until the intake is complete, then produces a structured summary a doctor can read in 30 seconds instead of spending the first ten minutes of the visit asking the same questions. Doctors get a read-only dashboard where each summary can be expanded into the full transcript, so every conclusion can be verified against what the patient actually said.
+Patients describe their symptoms in a chat. The bot asks follow-up questions one at a time — onset, location, severity, history, medications, allergies — until the intake request is sent for doctor review and closed. A patient can have only one active request at a time. Once a request is closed for review, further chat messages and uploads are rejected, and changed symptoms or a new concern start a new intake. Doctors review assigned requests and expand the transcript.
 
 This is an educational project. It is decision support, not a diagnostic tool, and it says so to every user.
 
@@ -15,19 +15,20 @@ Patient chat (React)
 FastAPI ── auth gate (verify token, read role from app_metadata)
         │
         ▼
-Orchestrator ── every turn:
+Orchestrator ── every intake turn:
         1. save message
         2. deterministic red-flag check ── emergency? stop and escalate
         3. RAG: pull relevant chunks from uploaded reports (pgvector)
-        4. LLM decides: ask next question, or intake complete
+        4. LLM decides: ask next question, or close request for review
         │
         ▼
-Structured summary (JSON) ──► Doctor dashboard (read-only)
+Structured summary + transcript ──► Doctor dashboard ──► mark completed
 ```
 
 A few design decisions worth knowing:
 
-- **The server decides when intake ends, not the model.** The LLM returns per-topic coverage booleans; the intake only closes when all nine topics are answered, declined, or unknown.
+- **The server decides when intake is complete, not the model.** The LLM returns per-topic coverage booleans; the request is marked `completed` only when all nine topics are answered, declined, or unknown.
+- **One active request is enforced in the database.** A partial unique index prevents more than one `active` request for the same patient.
 - **Red flags are rule-based, not LLM-based.** A deterministic checker (with negation handling, so "no chest pain" doesn't trigger) runs before the model on every message. The `red_flags` field in the summary is overwritten with these detected flags — the safety-critical output never depends on model judgement.
 - **Report text is treated as data, never as instructions**, which closes off prompt injection through uploaded PDFs.
 - **Isolation is enforced twice**: application queries scope by patient/doctor id, and Row Level Security policies back them up at the database.
@@ -74,7 +75,7 @@ Backend `.env`:
 
 ```env
 OPENAI_API_KEY=            # chat + embeddings
-DATABASE_URL=              # Supabase Postgres connection string
+DATABASE_URL=              # Supabase Postgres URI, not https://<project>.supabase.co
 SUPABASE_URL=              # https://<project>.supabase.co
 SUPABASE_JWT_SECRET=       # for HS256 token verification
 SUPABASE_SERVICE_ROLE_KEY= # backend only. Never ship this to a client.
@@ -85,7 +86,7 @@ Frontend `frontend/.env.local` uses only the **anon** key — the service-role k
 ```env
 VITE_API_BASE_URL=http://127.0.0.1:8000
 VITE_SUPABASE_URL=
-VITE_SUPABASE_ANON_KEY=
+VITE_SUPABASE_ANON_KEY=    # or VITE_SUPABASE_PUBLISHABLE_KEY
 ```
 
 ## API
@@ -94,16 +95,17 @@ VITE_SUPABASE_ANON_KEY=
 |---|---|---|
 | `GET /health` | — | liveness check |
 | `POST /auth/signup` | — | creates a patient account server-side; role is set by the server, never the caller |
-| `POST /chat` | patient | send a message; without `session_id`, resumes the patient's active intake or creates one. Response includes `resumed` and `intake_complete`; closed sessions return `409` |
-| `POST /summary` | patient | structured summary for a finished intake (`409` if incomplete, unless a red-flag escalation ended it) |
-| `POST /upload` | patient | attach a text-based PDF report (≤10 MB) to an owned active session; it gets chunked and embedded for retrieval |
-| `GET /sessions/active` | patient | return the patient's active intake and ordered messages, or `404` when none exists |
-| `POST /sessions/{id}/abandon` | patient | permanently abandon an owned active intake so a new concern can be started |
+| `POST /chat` | patient | send a message; without `session_id`, resumes the patient's active request or creates one. Response includes `resumed` and `intake_complete`; closed sessions return `409` |
+| `POST /summary` | patient | structured summary for a completed intake (`409` if still incomplete, unless a red-flag escalation ended it) |
+| `POST /upload` | patient | attach a text-based PDF report (≤10 MB) to an owned active request; extracted text is normalized to compact markdown before chunking and embedding |
+| `GET /sessions/active` | patient | return the patient's active request and ordered messages, or `404` when none exists |
+| `POST /sessions/{id}/abandon` | patient | close an active request as abandoned so a new intake can be started |
 | `GET /doctor/patients` | doctor | patients assigned to this doctor |
-| `GET /doctor/summaries` | doctor | their summaries, optionally filtered by `patient_id` |
+| `GET /doctor/summaries` | doctor | assigned completed/escalated requests, optionally filtered by `patient_id`; summary may be null until generated |
 | `GET /doctor/sessions/{id}` | doctor | full ordered transcript + summary, for verification |
+| `POST /doctor/sessions/{id}/complete` | doctor | mark an assigned request completed |
 
-Doctor access is strictly read-only. Assignments are created manually (there is deliberately no API for it):
+Doctor access is scoped to assigned patients; the only doctor write operation is marking a reviewed request completed. Assignments are created manually (there is deliberately no API for it):
 
 ```sql
 insert into public.patient_doctor (patient_id, doctor_id)

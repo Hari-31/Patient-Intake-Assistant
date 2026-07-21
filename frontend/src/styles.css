@@ -238,6 +238,91 @@ h1 {
     linear-gradient(180deg, #f0fdff 0%, #f7fafc 36%, #ffffff 100%);
 }
 
+.simple-landing {
+  height: calc(100dvh - 64px);
+  min-height: 560px;
+  position: relative;
+  display: grid;
+  align-items: center;
+  overflow: hidden;
+  background: #05313a;
+  color: #ffffff;
+}
+
+.simple-landing-image,
+.simple-landing-overlay {
+  position: absolute;
+  inset: 0;
+}
+
+.simple-landing-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.simple-landing-overlay {
+  background:
+    linear-gradient(90deg, rgba(4, 32, 40, 0.94) 0%, rgba(4, 32, 40, 0.82) 48%, rgba(4, 32, 40, 0.5) 100%),
+    linear-gradient(180deg, rgba(4, 32, 40, 0.12) 0%, rgba(4, 32, 40, 0.64) 100%);
+}
+
+.simple-landing-content {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 1120px);
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+  gap: 34px;
+  align-items: center;
+  padding: 40px 24px;
+}
+
+.simple-landing-copy h1 {
+  max-width: 780px;
+  margin-top: 14px;
+  font-size: clamp(2.6rem, 6vw, 5.4rem);
+  line-height: 0.98;
+}
+
+.simple-landing-copy p {
+  max-width: 58ch;
+  margin: 18px 0 0;
+  color: #dff8f7;
+  font-size: clamp(1rem, 1.7vw, 1.22rem);
+}
+
+.landing-action-panel {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid rgba(204, 251, 241, 0.28);
+  border-radius: 8px;
+  background: rgba(246, 253, 252, 0.96);
+  color: var(--text);
+  box-shadow: 0 24px 60px rgba(4, 24, 31, 0.26);
+}
+
+.landing-action-main {
+  min-height: 54px;
+  justify-content: center;
+  text-decoration: none;
+  font-size: 1rem;
+}
+
+.doctor-signin-row {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-weight: 700;
+}
+
 .landing-hero {
   min-height: clamp(560px, calc(100dvh - 118px), 760px);
   position: relative;
@@ -725,6 +810,19 @@ h1 {
   padding: 20px;
 }
 
+.auth-mode-heading {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  color: var(--primary-strong);
+  font-weight: 780;
+}
+
 .segmented-control {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -879,6 +977,18 @@ button:focus-visible {
   margin-bottom: 2px;
 }
 
+.notice-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.notice-action-row .secondary-button {
+  flex: 0 0 auto;
+  background: #ffffff;
+}
+
 .notice-info {
   background: var(--surface-muted);
   color: var(--text);
@@ -914,6 +1024,58 @@ button:focus-visible {
   font-size: clamp(1.75rem, 3vw, 2.5rem);
 }
 
+.patient-workspace {
+  height: calc(100dvh - 64px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-top: 18px;
+  padding-bottom: 18px;
+}
+
+.patient-workspace > .notice {
+  flex: 0 0 auto;
+  margin-bottom: 12px;
+}
+
+.request-status-pill {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 13px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-weight: 760;
+  white-space: nowrap;
+}
+
+.request-status-pill[data-status="submitted"] {
+  border-color: #a9dec3;
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.request-status-pill[data-status="completed"] {
+  border-color: #a9dec3;
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.request-status-pill[data-status="escalated"] {
+  border-color: #f2b8b1;
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.request-status-pill[data-status="abandoned"] {
+  border-color: var(--border-strong);
+  background: var(--surface-muted);
+  color: var(--muted);
+}
+
 .patient-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(330px, 420px);
@@ -921,11 +1083,43 @@ button:focus-visible {
   align-items: start;
 }
 
+.patient-workspace .patient-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  align-items: stretch;
+  overflow: hidden;
+}
+
 .doctor-grid {
   display: grid;
-  grid-template-columns: minmax(260px, 360px) minmax(0, 1fr) minmax(320px, 420px);
+  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
   gap: 18px;
-  align-items: start;
+  align-items: stretch;
+}
+
+.doctor-workspace {
+  height: calc(100dvh - 64px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-top: 18px;
+  padding-bottom: 18px;
+}
+
+.doctor-workspace > .notice {
+  flex: 0 0 auto;
+  margin-bottom: 12px;
+}
+
+.doctor-workspace .workspace-heading {
+  flex: 0 0 auto;
+  margin-bottom: 14px;
+}
+
+.doctor-workspace .doctor-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .panel {
@@ -954,18 +1148,21 @@ button:focus-visible {
 }
 
 .chat-panel {
-  min-height: calc(100vh - 178px);
-  grid-template-rows: auto minmax(360px, 1fr) auto auto;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  overflow: hidden;
 }
 
 .message-list {
-  min-height: 360px;
-  max-height: calc(100vh - 350px);
+  min-height: 0;
+  max-height: none;
   display: flex;
   flex-direction: column;
   gap: 10px;
   overflow: auto;
-  padding: 2px 4px 2px 2px;
+  overscroll-behavior: contain;
+  padding: 2px 8px 2px 2px;
+  scroll-behavior: smooth;
 }
 
 .message-bubble {
@@ -1008,19 +1205,36 @@ button:focus-visible {
 
 .chat-composer {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   align-items: end;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.chat-textarea {
+  min-height: 44px;
+  max-height: 144px;
+  resize: none;
+  overflow: hidden;
+  line-height: 1.45;
 }
 
 .send-button {
   min-width: 110px;
-  min-height: 104px;
+  min-height: 44px;
+  align-self: end;
 }
 
 .side-stack {
   display: grid;
   gap: 18px;
+}
+
+.patient-workspace .side-stack {
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .summary-view {
@@ -1173,24 +1387,55 @@ button:focus-visible {
 }
 
 .review-list-panel,
-.transcript-panel,
 .summary-detail-panel {
-  min-height: calc(100vh - 178px);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.review-list-panel {
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+  padding: 12px;
+}
+
+.review-list-panel .panel-header h2 {
+  font-size: 0.95rem;
+}
+
+.review-list-panel .panel-header p {
+  font-size: 0.78rem;
+}
+
+.summary-detail-panel {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.summary-main-header {
+  min-height: 44px;
+}
+
+.summary-detail-scroll {
+  min-height: 0;
+  overflow: auto;
+  padding-right: 6px;
+  overscroll-behavior: contain;
 }
 
 .summary-list {
   display: grid;
   gap: 8px;
-  max-height: calc(100vh - 250px);
+  min-height: 0;
+  max-height: none;
   overflow: auto;
   padding-right: 4px;
+  overscroll-behavior: contain;
 }
 
 .summary-row {
   width: 100%;
   display: grid;
-  gap: 3px;
-  padding: 11px;
+  gap: 2px;
+  padding: 9px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
@@ -1207,25 +1452,62 @@ button:focus-visible {
 .summary-row span,
 .summary-row small {
   color: var(--muted);
-  font-size: 0.82rem;
+  font-size: 0.75rem;
 }
 
 .summary-row strong {
-  font-size: 0.95rem;
+  font-size: 0.88rem;
+  line-height: 1.25;
+}
+
+.summary-row em {
+  width: max-content;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--primary-strong);
+  font-size: 0.7rem;
+  font-style: normal;
+  font-weight: 780;
+}
+
+.doctor-summary-view {
+  padding-bottom: 18px;
 }
 
 .transcript-list {
-  display: grid;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
-  max-height: calc(100vh - 235px);
+  max-height: none;
   overflow: auto;
   padding-right: 4px;
+  overscroll-behavior: contain;
 }
 
 .transcript-message {
+  width: min(88%, 330px);
   padding: 11px 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
+  background: #fbfcfd;
+}
+
+.transcript-message.patient {
+  align-self: flex-end;
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #ffffff;
+}
+
+.transcript-message.assistant {
+  align-self: flex-start;
+  background: var(--surface-muted);
+}
+
+.transcript-message.system {
+  width: 100%;
   background: #fbfcfd;
 }
 
@@ -1239,9 +1521,154 @@ button:focus-visible {
   text-transform: capitalize;
 }
 
+.transcript-message.patient header {
+  color: rgba(255, 255, 255, 0.78);
+}
+
 .transcript-message p {
   margin: 7px 0 0;
   white-space: pre-wrap;
+}
+
+.transcript-dock {
+  width: min(420px, calc(100vw - 32px));
+  max-height: min(520px, calc(100dvh - 150px));
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 40;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 24px 60px rgba(22, 78, 99, 0.24);
+}
+
+.transcript-dock.minimized {
+  width: min(340px, calc(100vw - 32px));
+  grid-template-rows: auto;
+}
+
+.transcript-minimized-trigger {
+  width: 100%;
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 10px 9px 12px;
+  border: 0;
+  background: #fbfcfd;
+  color: var(--text);
+  text-align: left;
+}
+
+.transcript-minimized-trigger:hover {
+  background: var(--primary-soft);
+}
+
+.transcript-dock-header {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px 9px 12px;
+  border-bottom: 1px solid var(--border);
+  background: #fbfcfd;
+}
+
+.transcript-dock.minimized .transcript-dock-header {
+  border-bottom: 0;
+}
+
+.transcript-dock-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.transcript-dock-title svg {
+  flex: 0 0 auto;
+  color: var(--primary-strong);
+}
+
+.transcript-dock-title h2,
+.transcript-dock-title p {
+  margin: 0;
+}
+
+.transcript-dock-title.compact strong,
+.transcript-dock-title.compact small {
+  display: block;
+}
+
+.transcript-dock-title.compact strong {
+  font-size: 0.98rem;
+}
+
+.transcript-dock-title.compact small {
+  max-width: 180px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transcript-dock-title h2 {
+  font-size: 0.98rem;
+}
+
+.transcript-dock-title p {
+  max-width: 290px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transcript-toggle-button {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.transcript-toggle-button:hover {
+  border-color: var(--primary);
+  color: var(--primary-strong);
+}
+
+.transcript-expand-label {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--primary-strong);
+  font-size: 0.86rem;
+  font-weight: 780;
+}
+
+.transcript-dock-body {
+  min-height: 220px;
+  overflow: hidden;
+  display: grid;
+  padding: 12px;
 }
 
 .spin {
@@ -1279,6 +1706,38 @@ button:focus-visible {
     max-height: 520px;
   }
 
+  .patient-workspace .patient-grid {
+    grid-template-rows: minmax(0, 1fr) auto;
+    overflow: auto;
+  }
+
+  .patient-workspace .chat-panel {
+    min-height: min(620px, calc(100dvh - 220px));
+  }
+
+  .patient-workspace .message-list {
+    max-height: none;
+  }
+
+  .patient-workspace .side-stack {
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .doctor-workspace .doctor-grid {
+    grid-template-columns: minmax(190px, 240px) minmax(0, 1fr);
+  }
+
+  .doctor-workspace .review-list-panel,
+  .doctor-workspace .summary-detail-panel {
+    min-height: 0;
+  }
+
+  .doctor-workspace .summary-list,
+  .doctor-workspace .transcript-list {
+    max-height: none;
+  }
+
   .workflow-preview {
     grid-template-columns: 1fr;
   }
@@ -1290,6 +1749,15 @@ button:focus-visible {
 
   .workflow-tabs {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .simple-landing-content {
+    grid-template-columns: 1fr;
+    gap: 22px;
+  }
+
+  .landing-action-panel {
+    width: min(100%, 480px);
   }
 }
 
@@ -1318,9 +1786,89 @@ button:focus-visible {
     padding: 20px 14px 28px;
   }
 
+  .patient-workspace {
+    height: calc(100dvh - 116px);
+    padding: 12px 14px;
+  }
+
+  .doctor-workspace {
+    height: calc(100dvh - 116px);
+    padding: 12px 14px;
+  }
+
+  .patient-workspace .workspace-heading {
+    margin-bottom: 10px;
+  }
+
+  .patient-workspace > .notice {
+    margin-bottom: 10px;
+  }
+
+  .notice-action-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .patient-workspace .patient-grid {
+    gap: 12px;
+  }
+
+  .patient-workspace .chat-panel {
+    min-height: min(560px, calc(100dvh - 210px));
+    padding: 12px;
+  }
+
+  .doctor-workspace .doctor-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(132px, 28%) minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .doctor-workspace .review-list-panel,
+  .doctor-workspace .summary-detail-panel {
+    padding: 12px;
+  }
+
+  .transcript-dock,
+  .transcript-dock.minimized {
+    width: calc(100vw - 24px);
+    right: 12px;
+    bottom: 12px;
+  }
+
+  .transcript-dock {
+    max-height: min(430px, calc(100dvh - 150px));
+  }
+
+  .transcript-dock-title p {
+    max-width: calc(100vw - 130px);
+  }
+
   .landing-hero {
     min-height: auto;
     align-items: end;
+  }
+
+  .simple-landing {
+    height: calc(100dvh - 116px);
+    min-height: 520px;
+    align-items: center;
+  }
+
+  .simple-landing-content {
+    padding: 22px 14px;
+  }
+
+  .simple-landing-copy h1 {
+    font-size: clamp(2rem, 11vw, 3.4rem);
+  }
+
+  .simple-landing-copy p {
+    font-size: 1rem;
+  }
+
+  .landing-action-panel {
+    padding: 14px;
   }
 
   .landing-hero-content {

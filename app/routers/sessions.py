@@ -1,11 +1,12 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.dependencies.auth import require_patient
 from app.models.auth import AuthenticatedUser
 from app.models.chats import ActiveSessionResponse, SessionMessage, SessionStatus
 from app.services.conversation_store import (
+    ConversationStoreConfigurationError,
     ConversationStoreError,
     ConversationStore,
     SessionClosedError,
@@ -29,9 +30,14 @@ async def active_session(
     try:
         session = await store.get_active_session(patient.id)
     except ConversationStoreError as exc:
+        detail = (
+            str(exc)
+            if isinstance(exc, ConversationStoreConfigurationError)
+            else "Conversation storage is temporarily unavailable."
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Conversation storage is temporarily unavailable.",
+            detail=detail,
         ) from exc
     if session is None:
         raise HTTPException(
@@ -40,7 +46,7 @@ async def active_session(
         )
     return ActiveSessionResponse(
         session_id=session.session_id,
-        status=SessionStatus.active,
+        status=SessionStatus(session.status),
         messages=[
             SessionMessage(
                 role=message.role,
@@ -57,24 +63,26 @@ async def abandon_session(
     session_id: UUID,
     patient: AuthenticatedUser = Depends(require_patient),
     store: ConversationStore = Depends(get_conversation_store),
-) -> Response:
+) -> None:
     try:
-        await store.close_session(
-            patient.id, session_id, "abandoned"
-        )
+        await store.close_session(patient.id, session_id, "abandoned")
     except SessionNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="The requested resource was not found or is unavailable.",
+            detail="No conversation exists for that session id.",
         ) from exc
     except SessionClosedError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="This intake is already closed.",
+            detail="This intake is closed. Start a new intake for a new concern.",
         ) from exc
     except ConversationStoreError as exc:
+        detail = (
+            str(exc)
+            if isinstance(exc, ConversationStoreConfigurationError)
+            else "Conversation storage is temporarily unavailable."
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Conversation storage is temporarily unavailable.",
+            detail=detail,
         ) from exc
-    return Response(status_code=status.HTTP_204_NO_CONTENT)

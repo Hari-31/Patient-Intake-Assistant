@@ -10,6 +10,8 @@ import psycopg
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
+from app.services.database import require_postgres_url
+
 
 DEFAULT_CHUNK_SIZE = 800
 DEFAULT_CHUNK_OVERLAP = 100
@@ -168,10 +170,12 @@ class RAGService:
         )
 
     def _connection(self) -> psycopg.Connection:
-        if not self._database_url:
-            raise RAGConfigurationError("DATABASE_URL must be configured for RAG.")
+        try:
+            database_url = require_postgres_url(self._database_url)
+        except ValueError as exc:
+            raise RAGConfigurationError(str(exc)) from exc
         return psycopg.connect(
-            self._database_url,
+            database_url,
             connect_timeout=10,
             application_name="patient-intake-rag",
         )

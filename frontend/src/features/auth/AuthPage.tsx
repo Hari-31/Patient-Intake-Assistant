@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Eye, KeyRound, LogIn, UserPlus } from "lucide-react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import {
   useForm,
   type FieldValues,
@@ -30,7 +30,13 @@ type SignupValues = z.infer<typeof signupSchema>;
 type AuthMode = "signin" | "signup";
 
 export function AuthPage() {
-  const [mode, setMode] = useState<AuthMode>("signin");
+  const [searchParams] = useSearchParams();
+  const requestedRole = searchParams.get("role");
+  const doctorOnly = requestedRole === "doctor";
+  const requestedMode = searchParams.get("mode");
+  const [mode, setMode] = useState<AuthMode>(() =>
+    requestedMode === "signup" && !doctorOnly ? "signup" : "signin",
+  );
   const [showPassword, setShowPassword] = useState(false);
   const apiClient = useApiClient();
   const auth = useAuth();
@@ -42,6 +48,10 @@ export function AuthPage() {
   const signupForm = useForm<SignupValues>({
     defaultValues: { name: "", email: "", password: "" },
   });
+
+  useEffect(() => {
+    setMode(requestedMode === "signup" && !doctorOnly ? "signup" : "signin");
+  }, [doctorOnly, requestedMode]);
 
   const signInMutation = useMutation({
     mutationFn: async (values: SignInValues) => auth.signIn(values.email, values.password),
@@ -83,34 +93,45 @@ export function AuthPage() {
   return (
     <section className="auth-layout" aria-labelledby="auth-title">
       <div className="auth-summary">
-        <div className="eyebrow">Secure intake workspace</div>
+        <div className="eyebrow">{doctorOnly ? "Doctor sign in" : "Secure intake workspace"}</div>
         <h1 id="auth-title">Patient Intake Assistant</h1>
-        <p>Structured patient conversations, summary generation, PDF report context, and assigned-doctor review.</p>
+        <p>
+          {doctorOnly
+            ? "Doctor accounts are created by an admin. Sign in to review assigned patient requests."
+            : "Create a patient account, open one active request, and start a new intake if something changes after review submission."}
+        </p>
       </div>
 
       <div className="auth-panel">
-        <div className="segmented-control" role="tablist" aria-label="Authentication mode">
-          <button
-            type="button"
-            className={mode === "signin" ? "active" : undefined}
-            aria-selected={mode === "signin"}
-            role="tab"
-            onClick={() => setMode("signin")}
-          >
-            <LogIn aria-hidden="true" size={16} />
-            Sign in
-          </button>
-          <button
-            type="button"
-            className={mode === "signup" ? "active" : undefined}
-            aria-selected={mode === "signup"}
-            role="tab"
-            onClick={() => setMode("signup")}
-          >
-            <UserPlus aria-hidden="true" size={16} />
-            Patient signup
-          </button>
-        </div>
+        {doctorOnly ? (
+          <div className="auth-mode-heading">
+            <LogIn aria-hidden="true" size={18} />
+            <span>Doctor sign in</span>
+          </div>
+        ) : (
+          <div className="segmented-control" role="tablist" aria-label="Authentication mode">
+            <button
+              type="button"
+              className={mode === "signin" ? "active" : undefined}
+              aria-selected={mode === "signin"}
+              role="tab"
+              onClick={() => setMode("signin")}
+            >
+              <LogIn aria-hidden="true" size={16} />
+              Sign in
+            </button>
+            <button
+              type="button"
+              className={mode === "signup" ? "active" : undefined}
+              aria-selected={mode === "signup"}
+              role="tab"
+              onClick={() => setMode("signup")}
+            >
+              <UserPlus aria-hidden="true" size={16} />
+              Patient signup
+            </button>
+          </div>
+        )}
 
         {error instanceof Error ? (
           <Notice tone="danger" title="Authentication failed">
