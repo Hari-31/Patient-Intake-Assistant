@@ -5,10 +5,16 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.dependencies.auth import require_doctor
 from app.models.auth import AuthenticatedUser
-from app.models.doctors import DoctorPatient, DoctorSessionTranscript, DoctorSummary
+from app.models.doctors import (
+    DoctorPatient,
+    DoctorSessionCompletion,
+    DoctorSessionTranscript,
+    DoctorSummary,
+)
 from app.services.doctor_service import (
     DoctorReader,
     DoctorResourceNotFound,
+    DoctorSessionNotCompletable,
     DoctorStoreError,
     PostgresDoctorReader,
 )
@@ -73,5 +79,27 @@ async def get_session(
         return await reader.get_session(doctor.id, session_id)
     except DoctorResourceNotFound as exc:
         raise _not_found(exc) from exc
+    except DoctorStoreError as exc:
+        raise _unavailable(exc) from exc
+
+
+@router.post(
+    "/sessions/{session_id}/complete",
+    response_model=DoctorSessionCompletion,
+)
+async def complete_session(
+    session_id: UUID,
+    doctor: AuthenticatedUser = Depends(require_doctor),
+    reader: DoctorReader = Depends(get_doctor_reader),
+) -> DoctorSessionCompletion:
+    try:
+        return await reader.complete_session(doctor.id, session_id)
+    except DoctorResourceNotFound as exc:
+        raise _not_found(exc) from exc
+    except DoctorSessionNotCompletable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This request cannot be marked completed.",
+        ) from exc
     except DoctorStoreError as exc:
         raise _unavailable(exc) from exc

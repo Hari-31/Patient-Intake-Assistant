@@ -3,6 +3,7 @@ import type {
   ChatResponse,
   ActiveSession,
   DoctorPatient,
+  DoctorSessionCompletion,
   DoctorSessionTranscript,
   DoctorSummary,
   MedicalSummary,
@@ -96,6 +97,12 @@ export class ApiClient {
 
   getDoctorSession(sessionId: string): Promise<DoctorSessionTranscript> {
     return this.request(`/doctor/sessions/${sessionId}`);
+  }
+
+  completeDoctorSession(sessionId: string): Promise<DoctorSessionCompletion> {
+    return this.request(`/doctor/sessions/${sessionId}/complete`, {
+      method: "POST",
+    });
   }
 
   async uploadReport(sessionId: string, file: File): Promise<ReportUploadResponse> {

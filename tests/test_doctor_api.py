@@ -10,12 +10,13 @@ from app.models.auth import AuthenticatedUser, UserRole
 from app.models.chats import MedicalSummary
 from app.models.doctors import (
     DoctorPatient,
+    DoctorSessionCompletion,
     DoctorSessionTranscript,
     DoctorSummary,
     TranscriptMessage,
 )
 from app.routers.doctors import get_doctor_reader
-from app.services.doctor_service import DoctorResourceNotFound
+from app.services.doctor_service import DoctorResourceNotFound, DoctorSessionNotCompletable
 
 
 def sample_summary() -> MedicalSummary:
@@ -36,6 +37,7 @@ class FakeDoctorReader:
         self.session_id = uuid4()
         self.now = datetime.now(timezone.utc)
         self.calls: list[tuple] = []
+        self.status = "submitted"
 
     async def list_patients(self, doctor_id: UUID):
         self.calls.append(("patients", doctor_id))
@@ -58,6 +60,7 @@ class FakeDoctorReader:
                 session_id=self.session_id,
                 patient_id=self.patient_id,
                 patient_name="Test Patient",
+                status=self.status,
                 summary=sample_summary(),
                 created_at=self.now,
                 updated_at=self.now,
@@ -72,6 +75,7 @@ class FakeDoctorReader:
             session_id=self.session_id,
             patient_id=self.patient_id,
             patient_name="Test Patient",
+            status=self.status,
             created_at=self.now,
             messages=[
                 TranscriptMessage(
@@ -84,6 +88,18 @@ class FakeDoctorReader:
                 ),
             ],
             summary=sample_summary(),
+        )
+
+    async def complete_session(self, doctor_id: UUID, session_id: UUID):
+        self.calls.append(("complete", doctor_id, session_id))
+        if session_id != self.session_id:
+            raise DoctorResourceNotFound(str(session_id))
+        if self.status not in {"active", "submitted", "completed"}:
+            raise DoctorSessionNotCompletable(str(session_id))
+        self.status = "completed"
+        return DoctorSessionCompletion(
+            session_id=self.session_id,
+            status=self.status,
         )
 
 
@@ -124,11 +140,24 @@ class DoctorApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         body = response.json()
+        self.assertEqual(body["status"], "submitted")
         self.assertEqual(
             [message["role"] for message in body["messages"]],
             ["patient", "assistant"],
         )
         self.assertEqual(body["summary"]["chief_complaint"], "Headache")
+
+    def test_doctor_marks_assigned_session_completed(self) -> None:
+        response = self.client.post(
+            f"/doctor/sessions/{self.reader.session_id}/complete"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "completed")
+        self.assertEqual(
+            self.reader.calls[-1],
+            ("complete", self.doctor.id, self.reader.session_id),
+        )
 
     def test_unassigned_patient_and_session_are_not_found(self) -> None:
         summaries = self.client.get(
@@ -148,12 +177,13 @@ class DoctorApiTests(unittest.TestCase):
             self.client.get("/doctor/patients"),
             self.client.get("/doctor/summaries"),
             self.client.get(f"/doctor/sessions/{uuid4()}"),
+            self.client.post(f"/doctor/sessions/{uuid4()}/complete"),
         ]
 
         self.assertTrue(all(response.status_code == 403 for response in responses))
         self.assertEqual(self.reader.calls, [])
 
-    def test_doctor_routes_expose_no_write_operations(self) -> None:
+    def test_doctor_routes_expose_only_completion_write(self) -> None:
         self.assertEqual(self.client.post("/doctor/patients").status_code, 405)
         self.assertEqual(
             self.client.delete(f"/doctor/sessions/{self.reader.session_id}").status_code,

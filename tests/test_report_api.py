@@ -28,6 +28,7 @@ class FakeReportService:
             session_id=kwargs["session_id"],
             filename=kwargs["filename"],
             chunk_count=3,
+            markdown_char_count=128,
         )
 
 
@@ -53,6 +54,7 @@ class ReportApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.json()["chunk_count"], 3)
+        self.assertEqual(response.json()["markdown_char_count"], 128)
         call = self.service.calls[0]
         self.assertEqual(call["patient_id"], self.patient.id)
         self.assertEqual(call["session_id"], session_id)

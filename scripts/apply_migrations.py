@@ -1,17 +1,25 @@
 import os
+import sys
 from pathlib import Path
 
 import psycopg
 from dotenv import load_dotenv
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from app.services.database import require_postgres_url
+
 
 def main() -> None:
     load_dotenv()
-    database_url = os.getenv("DATABASE_URL")
-    if not database_url:
-        raise SystemExit("DATABASE_URL must be set in .env before applying migrations.")
+    try:
+        database_url = require_postgres_url(os.getenv("DATABASE_URL"))
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
-    migrations_dir = Path(__file__).parents[1] / "supabase" / "migrations"
+    migrations_dir = PROJECT_ROOT / "supabase" / "migrations"
     migration_files = sorted(migrations_dir.glob("*.sql"))
     if not migration_files:
         raise SystemExit("No SQL migrations were found.")

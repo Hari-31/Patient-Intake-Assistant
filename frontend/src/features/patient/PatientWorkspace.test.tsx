@@ -129,12 +129,12 @@ describe("PatientWorkspace safety", () => {
     expect(textarea).toBeDisabled();
   });
 
-  it("offers a summary only after the backend marks intake complete", async () => {
+  it("locks the composer after the backend marks intake complete", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
           session_id: "session-1",
-          reply: "Thank you. Your intake assessment is complete. The doctor will see you soon. Please wait for further instructions. You may log out now.",
+          reply: "Thank you. Your intake request has been sent for doctor review. If something changes or you have a new concern, start a new intake.",
           emergency_triggered: false,
           intake_complete: true,
         }),
@@ -149,17 +149,24 @@ describe("PatientWorkspace safety", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     expect(await screen.findByText("Medical summary")).toBeInTheDocument();
-    expect(screen.getByText("Intake assessment complete")).toBeInTheDocument();
-    expect(screen.getByText(/may log out using the sign-out button/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Intake complete" })).toBeDisabled();
+    expect(screen.getByText("Intake sent for doctor review")).toBeInTheDocument();
+    expect(screen.getByText(/this intake is closed/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Intake closed" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Start new intake" })).toBeEnabled();
+    expect(screen.getByRole("textbox")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Generate" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start new intake" }));
+    expect(screen.getByText("No messages yet.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    expect(screen.getByRole("textbox")).toBeEnabled();
   });
 
-  it("restores the active transcript and abandons it before starting fresh", async () => {
+  it("locks a restored submitted transcript and offers a new intake action", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
     renderWorkspace(fetchMock, {
       session_id: "session-active",
-      status: "active",
+      status: "submitted",
       messages: [
         {
           role: "patient",
@@ -176,12 +183,42 @@ describe("PatientWorkspace safety", () => {
 
     expect(await screen.findByText("I have a headache.")).toBeInTheDocument();
     expect(screen.getByText("When did it begin?")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Start new intake" }));
+    expect(screen.getByText("Sent for review")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start new intake" })).toBeEnabled();
+    expect(screen.getByRole("textbox")).toBeDisabled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    expect(String(fetchMock.mock.calls[0][0])).toContain(
-      "/sessions/session-active/abandon",
+  it("treats a 409 chat response as a closed intake end state", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          detail: "This intake is closed. Start a new intake for a new concern.",
+        }),
+        { status: 409, headers: { "Content-Type": "application/json" } },
+      ),
     );
-    await waitFor(() => expect(screen.getByText("No messages yet.")).toBeInTheDocument());
+    renderWorkspace(fetchMock, {
+      session_id: "session-complete",
+      status: "active",
+      messages: [
+        {
+          role: "patient",
+          content: "I have a headache.",
+          created_at: "2026-07-21T10:00:00Z",
+        },
+      ],
+    });
+
+    const textarea = await screen.findByRole("textbox");
+    await waitFor(() => expect(textarea).toBeEnabled());
+    fireEvent.change(textarea, { target: { value: "ok" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("Intake sent for doctor review")).toBeInTheDocument();
+    expect(screen.queryByText("Message failed")).not.toBeInTheDocument();
+    expect(screen.queryByText("ok")).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Start new intake" })).toBeEnabled();
   });
 });

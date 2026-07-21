@@ -36,10 +36,14 @@ export function AppShell() {
             </>
           ) : (
             <>
-              <a href="/#platform">Platform</a>
-              <a href="/#workflow">Workflow</a>
-              <a href="/#trust">Trust</a>
-              <a href="/#faq">FAQ</a>
+              <Link to="/auth?mode=signup&role=patient">
+                <MessageSquareText aria-hidden="true" size={17} />
+                <span>Patient</span>
+              </Link>
+              <Link to="/auth?mode=signin&role=doctor">
+                <UserRound aria-hidden="true" size={17} />
+                <span>Doctor</span>
+              </Link>
             </>
           )}
         </nav>
@@ -52,7 +56,7 @@ export function AppShell() {
               </button>
             </>
           ) : (
-            <Link className="topbar-login" to="/auth">
+            <Link className="topbar-login" to="/auth?mode=signin">
               <LogIn aria-hidden="true" size={17} />
               Sign in
             </Link>

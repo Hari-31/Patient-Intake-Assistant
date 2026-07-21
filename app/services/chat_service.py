@@ -6,7 +6,11 @@ from uuid import UUID
 from pydantic import ValidationError
 
 from app.models.chats import ChatResponse, IntakeTurnDecision, MedicalSummary
-from app.services.conversation_store import ConversationStore, Message
+from app.services.conversation_store import (
+    ConversationStore,
+    Message,
+    SessionClosedError,
+)
 from app.services.llm_client import LLMClient
 from app.services.rag_service import RAGService
 from app.services.safety import URGENT_CARE_MESSAGE, find_red_flags
@@ -69,8 +73,8 @@ class IntakeIncompleteError(RuntimeError):
 
 
 INTAKE_COMPLETE_MESSAGE = (
-    "Thank you. Your intake assessment is complete. The doctor will see you "
-    "soon. Please wait for further instructions. You may log out now."
+    "Thank you. Your intake request has been sent for doctor review. If "
+    "something changes or you have a new concern, start a new intake."
 )
 
 
@@ -94,18 +98,20 @@ class ChatService:
                 patient_id
             )
 
+        session_status = await self.store.get_session_status(patient_id, session_id)
+        if session_status != "active":
+            raise SessionClosedError(str(session_id))
+
         message = Message(role="user", content=patient_message.strip())
         await self.store.add(patient_id, session_id, message)
 
         red_flags = find_red_flags(patient_message)
         if red_flags:
-            await self.store.add(
+            await self.store.add_and_close(
                 patient_id,
                 session_id,
                 Message(role="assistant", content=URGENT_CARE_MESSAGE),
-            )
-            await self.store.close_session(
-                patient_id, session_id, "escalated"
+                "escalated",
             )
             return ChatResponse(
                 session_id=session_id,
@@ -138,12 +144,16 @@ class ChatService:
             if intake_complete
             else _build_follow_up_reply(decision)
         )
-        await self.store.add(
-            patient_id, session_id, Message(role="assistant", content=reply)
-        )
         if intake_complete:
-            await self.store.close_session(
-                patient_id, session_id, "completed"
+            await self.store.add_and_close(
+                patient_id,
+                session_id,
+                Message(role="assistant", content=reply),
+                "completed",
+            )
+        else:
+            await self.store.add(
+                patient_id, session_id, Message(role="assistant", content=reply)
             )
         return ChatResponse(
             session_id=session_id,
@@ -156,6 +166,7 @@ class ChatService:
     async def summarize(
         self, patient_id: UUID, session_id: UUID
     ) -> MedicalSummary:
+        session_status = await self.store.get_session_status(patient_id, session_id)
         history = await self.store.get(patient_id, session_id)
         if not history:
             raise EmptyConversationError(session_id)
@@ -169,18 +180,21 @@ class ChatService:
             )
         )
         if not detected_flags:
-            raw_decision = await self.llm.complete(
-                [
-                    Message(role="system", content=INTAKE_SYSTEM_PROMPT),
-                    *history,
-                ],
-                response_model=IntakeTurnDecision,
-            )
-            decision = _parse_intake_decision(raw_decision)
-            if not decision.coverage.complete:
-                raise IntakeIncompleteError(
-                    "Complete the intake questions before generating a summary."
+            if session_status == "active":
+                raw_decision = await self.llm.complete(
+                    [
+                        Message(role="system", content=INTAKE_SYSTEM_PROMPT),
+                        *history,
+                    ],
+                    response_model=IntakeTurnDecision,
                 )
+                decision = _parse_intake_decision(raw_decision)
+                if not decision.coverage.complete:
+                    raise IntakeIncompleteError(
+                        "Complete the intake questions before generating a summary."
+                    )
+            elif session_status not in {"submitted", "completed"}:
+                raise SessionClosedError(str(session_id))
 
         persisted_summary = await self.store.get_summary(patient_id, session_id)
         # Summaries saved before warning_signs_to_watch existed may mix future

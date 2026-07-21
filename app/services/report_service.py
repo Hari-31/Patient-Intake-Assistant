@@ -13,6 +13,7 @@ from pypdf import PdfReader
 
 from app.models.reports import ReportUploadResponse
 from app.services.conversation_store import SessionClosedError, SessionNotFoundError
+from app.services.database import require_postgres_url
 from app.services.rag_service import EmbeddedChunk, RAGService, get_rag_service
 
 
@@ -58,8 +59,10 @@ class ReportService:
         self._validate_pdf(filename, content_type, content)
         await asyncio.to_thread(self._ensure_owned_session_sync, patient_id, session_id)
 
-        extracted_text = await asyncio.to_thread(self._extract_pdf_text, content)
-        embedded_chunks = await self._rag.embed_document(extracted_text)
+        report_markdown = await asyncio.to_thread(
+            self._extract_pdf_markdown, content, filename
+        )
+        embedded_chunks = await self._rag.embed_document(report_markdown)
         if not embedded_chunks:
             raise ReportValidationError(
                 "The PDF does not contain extractable text. Scanned PDFs require OCR."
@@ -88,13 +91,16 @@ class ReportService:
             session_id=session_id,
             filename=filename,
             chunk_count=len(embedded_chunks),
+            markdown_char_count=len(report_markdown),
         )
 
     def _connection(self) -> psycopg.Connection:
-        if not self._database_url:
-            raise ReportServiceError("DATABASE_URL must be configured.")
+        try:
+            database_url = require_postgres_url(self._database_url)
+        except ValueError as exc:
+            raise ReportServiceError(str(exc)) from exc
         return psycopg.connect(
-            self._database_url,
+            database_url,
             connect_timeout=10,
             application_name="patient-intake-reports",
         )
@@ -136,7 +142,9 @@ class ReportService:
                             (id, patient_id, session_id, filename, storage_path)
                         select %s, patient_id, id, %s, %s
                         from public.sessions
-                        where id = %s and patient_id = %s and status = 'active'
+                        where id = %s
+                          and patient_id = %s
+                          and status = 'active'
                         returning id
                         """,
                         (
@@ -264,26 +272,59 @@ class ReportService:
             raise ReportValidationError("PDF reports must be 10 MB or smaller.")
 
     @staticmethod
-    def _extract_pdf_text(content: bytes) -> str:
+    def _extract_pdf_markdown(content: bytes, filename: str) -> str:
         try:
             reader = PdfReader(io.BytesIO(content))
-            text = "\n".join(page.extract_text() or "" for page in reader.pages)
+            pages = [
+                _normalize_pdf_page_text(page.extract_text() or "")
+                for page in reader.pages
+            ]
         except Exception as exc:
             raise ReportValidationError("The PDF could not be read.") from exc
-        text = text.strip()
-        if not text:
+        pages = [page for page in pages if page]
+        if not pages:
             raise ReportValidationError(
                 "The PDF does not contain extractable text. Scanned PDFs require OCR."
             )
-        if len(text) > MAX_EXTRACTED_TEXT_CHARS:
+        title = _markdown_title(filename)
+        markdown = "\n\n".join(
+            [f"# {title}"]
+            + [
+                f"## Page {index}\n\n{page}"
+                for index, page in enumerate(pages, start=1)
+            ]
+        )
+        if len(markdown) > MAX_EXTRACTED_TEXT_CHARS:
             raise ReportValidationError("The extracted report text is too large.")
-        return text
+        return markdown
 
 
 def _safe_filename(filename: str) -> str:
     name = Path(filename).name
     safe = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._")
     return safe or "report.pdf"
+
+
+def _markdown_title(filename: str) -> str:
+    stem = Path(filename).stem or "Medical report"
+    title = re.sub(r"[_-]+", " ", stem)
+    return " ".join(title.split()) or "Medical report"
+
+
+def _normalize_pdf_page_text(text: str) -> str:
+    lines = [
+        re.sub(r"\s+", " ", line).strip()
+        for line in text.replace("\x00", "").splitlines()
+    ]
+    lines = [line for line in lines if line]
+    markdown_lines: list[str] = []
+    for line in lines:
+        bullet_match = re.match(r"^[•*-]\s*(.+)$", line)
+        if bullet_match:
+            markdown_lines.append(f"- {bullet_match.group(1).strip()}")
+        else:
+            markdown_lines.append(line)
+    return "\n".join(markdown_lines).strip()
 
 
 def _embedding_literal(embedding: list[float]) -> str:

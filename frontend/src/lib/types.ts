@@ -25,7 +25,7 @@ export type ChatResponse = {
   resumed: boolean;
 };
 
-export type SessionStatus = "active" | "completed" | "escalated" | "abandoned";
+export type SessionStatus = "active" | "submitted" | "completed" | "escalated" | "abandoned";
 
 export type ActiveSession = {
   session_id: string;
@@ -48,6 +48,7 @@ export type ReportUploadResponse = {
   session_id: string;
   filename: string;
   chunk_count: number;
+  markdown_char_count: number;
 };
 
 export type DoctorPatient = {
@@ -60,7 +61,8 @@ export type DoctorSummary = {
   session_id: string;
   patient_id: string;
   patient_name: string | null;
-  summary: MedicalSummary;
+  status: SessionStatus;
+  summary: MedicalSummary | null;
   created_at: string;
   updated_at: string;
 };
@@ -75,7 +77,13 @@ export type DoctorSessionTranscript = {
   session_id: string;
   patient_id: string;
   patient_name: string | null;
+  status: SessionStatus;
   created_at: string;
   messages: TranscriptMessage[];
   summary: MedicalSummary | null;
+};
+
+export type DoctorSessionCompletion = {
+  session_id: string;
+  status: SessionStatus;
 };
