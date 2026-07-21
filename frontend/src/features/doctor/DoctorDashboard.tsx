@@ -12,7 +12,7 @@ import {
 import { useApiClient } from "../../app/api-context";
 import { Notice } from "../../components/feedback/Notice";
 import { MedicalDisclaimer } from "../../components/feedback/MedicalDisclaimer";
-import { formatDateTime } from "../../lib/format";
+import { formatDateTime, formatTime } from "../../lib/format";
 import type { MedicalSummary } from "../../lib/types";
 
 export function DoctorDashboard() {
@@ -236,7 +236,7 @@ export function DoctorDashboard() {
                   <article key={`${message.role}-${message.created_at}-${message.content.slice(0, 16)}`} className={`transcript-message ${message.role}`}>
                     <header>
                       <strong>{message.role}</strong>
-                      <span>{formatDateTime(message.created_at)}</span>
+                      <time dateTime={message.created_at}>{formatTime(message.created_at)}</time>
                     </header>
                     <p>{message.content}</p>
                   </article>

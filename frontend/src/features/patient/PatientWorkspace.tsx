@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -9,6 +9,7 @@ import {
   Upload,
 } from "lucide-react";
 import { ApiError } from "../../lib/api-client";
+import { formatTime } from "../../lib/format";
 import type { ChatResponse, MedicalSummary, ReportUploadResponse, SessionStatus } from "../../lib/types";
 import { useApiClient } from "../../app/api-context";
 import { Notice } from "../../components/feedback/Notice";
@@ -19,6 +20,7 @@ type IntakeMessage = {
   id: string;
   role: "patient" | "assistant";
   content: string;
+  createdAt?: string;
   emergency?: boolean;
 };
 
@@ -73,6 +75,7 @@ export function PatientWorkspace() {
           id: `${message.created_at}-${index}`,
           role: message.role as "patient" | "assistant",
           content: message.content,
+          createdAt: message.created_at,
         })),
     );
   }, [activeSessionQuery.data, activeSessionQuery.isPending]);
@@ -149,6 +152,7 @@ export function PatientWorkspace() {
       id: crypto.randomUUID(),
       role: "patient",
       content: message,
+      createdAt: new Date().toISOString(),
     };
     sendInFlightRef.current = true;
     setDraft("");
@@ -174,11 +178,12 @@ export function PatientWorkspace() {
               .filter(
                 (item) => item.role === "patient" || item.role === "assistant",
               )
-              .map((item, index) => ({
-                id: `${item.created_at}-${index}`,
-                role: item.role as "patient" | "assistant",
-                content: item.content,
-              })),
+                .map((item, index) => ({
+                  id: `${item.created_at}-${index}`,
+                  role: item.role as "patient" | "assistant",
+                  content: item.content,
+                  createdAt: item.created_at,
+                })),
           );
           return;
         }
@@ -201,6 +206,22 @@ export function PatientWorkspace() {
     }
   }
 
+  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (
+      event.key !== "Enter" ||
+      event.shiftKey ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.nativeEvent.isComposing
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    event.currentTarget.form?.requestSubmit();
+  }
+
   function receiveChatResponse(response: ChatResponse) {
     setSessionId(response.session_id);
     setIntakeComplete(response.intake_complete);
@@ -217,6 +238,7 @@ export function PatientWorkspace() {
         id: crypto.randomUUID(),
         role: "assistant",
         content: response.reply,
+        createdAt: new Date().toISOString(),
         emergency: response.emergency_triggered,
       },
     ]);
@@ -385,8 +407,16 @@ export function PatientWorkspace() {
             ) : (
               messages.map((message) => (
                 <article key={message.id} className={`message-bubble ${message.role} ${message.emergency ? "emergency" : ""}`}>
-                  {message.emergency ? <AlertTriangle aria-hidden="true" size={16} /> : null}
-                  <p>{message.content}</p>
+                  <header className="message-meta">
+                    <span>{message.role === "patient" ? "You" : "Assistant"}</span>
+                    {message.createdAt ? (
+                      <time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time>
+                    ) : null}
+                  </header>
+                  <div className={message.emergency ? "message-content with-alert" : "message-content"}>
+                    {message.emergency ? <AlertTriangle aria-hidden="true" size={16} /> : null}
+                    <p>{message.content}</p>
+                  </div>
                 </article>
               ))
             )}
@@ -411,6 +441,7 @@ export function PatientWorkspace() {
               className="chat-textarea"
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={handleComposerKeyDown}
               placeholder={
                 emergencyActive
                   ? "This intake stopped after an emergency escalation"
@@ -482,8 +513,9 @@ export function PatientWorkspace() {
               }}
             >
               <Upload aria-hidden="true" size={22} />
-              <label>
-                <span>{selectedFile ? selectedFile.name : "Select PDF"}</span>
+              <label className="file-picker" aria-disabled={uploadDisabled}>
+                <span className="file-picker-text">{selectedFile ? selectedFile.name : "Choose PDF report"}</span>
+                <span className="file-picker-button">Browse</span>
                 <input
                   type="file"
                   accept="application/pdf,.pdf"

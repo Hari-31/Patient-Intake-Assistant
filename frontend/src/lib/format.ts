@@ -9,3 +9,14 @@ export function formatDateTime(value: string): string {
     timeStyle: "short",
   }).format(date);
 }
+
+export function formatTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    timeStyle: "short",
+  }).format(date);
+}
